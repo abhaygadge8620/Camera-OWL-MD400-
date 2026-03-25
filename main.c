@@ -779,7 +779,6 @@ static int handle_optics_reset_command(owl_cam_t *cam,
                                        uint8_t value,
                                        unsigned long loop_count)
 {
-    const uint8_t lrf_led_id = 76u;
     int rc;
     int led_rc;
 
@@ -1212,7 +1211,7 @@ int main(void)
      */
     (void)cache_rtsp_urls(&cam, g_loop_count, "startup rtsp");
     g_tracker_mode_on = 0;
-    g_selected_view_cam = OWL_TRACKER_DEFAULT_CAM;
+    g_selected_view_cam = OWL_TRACK_CAM_THERMAL;
 
     if (run_camera_diag_on_start != 0) {
         MAIN_LOG0("camera diagnostics startup request ignored; power-control diagnostics are disabled");
