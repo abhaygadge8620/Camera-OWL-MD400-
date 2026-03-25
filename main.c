@@ -41,24 +41,10 @@ static uint8_t g_selected_view_cam = 0u;
 #define OWL_TRACKER_CAM_DAY2     0x03u
 #define OWL_TRACKER_START        0x01u
 #define OWL_TRACKER_STOP         0x02u
-#define OWL_TRACKER_DEFAULT_CAM  OWL_TRACKER_CAM_THERMAL
-#define OWL_TRACKER_DEFAULT_X    320u
-#define OWL_TRACKER_DEFAULT_Y    240u
-
-
 /* Change this path if VLC is installed elsewhere */
 #define VLC_EXE_PATH "C:\\Program Files\\VideoLAN\\VLC\\vlc.exe"
 
-/*
- * ASSUMED tracker UART IDs.
- * Change this ID to your real tracker command ID.
- */
-#define UART_ID_TRACKER_STARTSTOP  90u   /* value 1=start, value 0=stop */
 #define TELEMETRY_LOSS_LED_OFF_MS  500u
-
-static uint8_t  g_pending_tracker_cam = OWL_TRACKER_DEFAULT_CAM;
-static uint16_t g_pending_tracker_x   = OWL_TRACKER_DEFAULT_X;
-static uint16_t g_pending_tracker_y   = OWL_TRACKER_DEFAULT_Y;
 
 static void get_tracker_center_for_cam(uint8_t cam_id, uint16_t *x_out, uint16_t *y_out)
 {
@@ -555,89 +541,6 @@ static int update_camera_switch_leds(led_status_router_t *led_router,
     }
 
     return 0;
-}
-
-static int handle_tracker_state_command(owl_cam_t *cam,
-                                        led_status_router_t *led_router,
-                                        const camera_params_t *cam_cfg,
-                                        uint16_t cam_tcp_port,
-                                        bool telemetry_enable,
-                                        uint8_t id,
-                                        uint8_t value,
-                                        unsigned long loop_count)
-{
-    int rc;
-
-    if ((cam == NULL) || (cam_cfg == NULL)) {
-        return -1;
-    }
-
-    if (id != UART_ID_TRACKER_STARTSTOP) {
-        return 0;
-    }
-
-    if ((value != 0u) && (value != 1u)) {
-        MAIN_LOG("loop=%lu tracker startstop unsupported value=%u", loop_count, (unsigned)value);
-        return 1;
-    }
-
-    /*
-     * value=1 -> tracker START
-     * value=0 -> tracker STOP
-     */
-    rc = main_tracker_set_coord(cam,
-                                OWL_IFACE_TRACKER,
-                                g_pending_tracker_cam,
-                                g_pending_tracker_x,
-                                g_pending_tracker_y,
-                                (value == 1u) ? OWL_TRACKER_START : OWL_TRACKER_STOP);
-    if (rc == OWL_ERR_IO) {
-        MAIN_LOG("loop=%lu tracker state command hit OWL_ERR_IO, reconnecting", loop_count);
-        if (recover_camera_connection(cam, led_router, cam_cfg, cam_tcp_port, telemetry_enable, loop_count, "tracker_state") == OWL_OK) {
-            rc = main_tracker_set_coord(cam,
-                                        OWL_IFACE_TRACKER,
-                                        g_pending_tracker_cam,
-                                        g_pending_tracker_x,
-                                        g_pending_tracker_y,
-                                        (value == 1u) ? OWL_TRACKER_START : OWL_TRACKER_STOP);
-        }
-    }
-
-    log_camera_response("tracker state", rc);
-    if (rc != OWL_OK) {
-        MAIN_LOG("loop=%lu tracker state failed value=%u cam=%u x=%u y=%u rc=%d",
-                 loop_count,
-                 (unsigned)value,
-                 (unsigned)g_pending_tracker_cam,
-                 (unsigned)g_pending_tracker_x,
-                 (unsigned)g_pending_tracker_y,
-                 rc);
-        return -2;
-    }
-
-    g_tracker_mode_on = (value == 1u) ? 1 : 0;
-
-    g_last_tracker_state.coord_cam_id = g_pending_tracker_cam;
-    g_last_tracker_state.coord_x = g_pending_tracker_x;
-    g_last_tracker_state.coord_y = g_pending_tracker_y;
-    g_last_tracker_state.coord_mode = (value == 1u) ? OWL_TRACKER_START : OWL_TRACKER_STOP;
-    g_last_tracker_valid = 1;
-
-    MAIN_LOG("loop=%lu tracker state ACK ok tracker_mode_on=%d cam=%u x=%u y=%u",
-             loop_count,
-             g_tracker_mode_on,
-             (unsigned)g_pending_tracker_cam,
-             (unsigned)g_pending_tracker_x,
-             (unsigned)g_pending_tracker_y);
-
-    if (g_tracker_mode_on == 1) {
-        /*
-         * Optional: when tracker starts, close VLC because tracker mode is now active.
-         */
-        owl_cam_vlc_stop();
-    }
-
-    return 1;
 }
 
 static int handle_camera_view_switch_command(owl_cam_t *cam,
@@ -1331,7 +1234,6 @@ int main(void)
         rc = uart_read_and_parse(&uart, &rx_id, &rx_value);
 
         if (rc == 1) {
-            int tracker_state_rc;
             int drop_tracker_rc;
             int lrf_single_measure_rc;
             int lrf_freq_rc;
@@ -1343,26 +1245,6 @@ int main(void)
             uart_idle_count = 0UL;
             MAIN_LOG("loop=%lu frame decoded id=%u value=%u",
                      g_loop_count, (unsigned)rx_id, (unsigned)rx_value);
-
-            tracker_state_rc = handle_tracker_state_command(&cam,
-                                                            &led_router,
-                                                            &cam_cfg,
-                                                            cam_tcp_port,
-                                                            telemetry_enable,
-                                                            rx_id,
-                                                            rx_value,
-                                                            g_loop_count);
-            if (tracker_state_rc < 0) {
-                MAIN_LOG("loop=%lu tracker state handler error id=%u value=%u rc=%d",
-                         g_loop_count, (unsigned)rx_id, (unsigned)rx_value, tracker_state_rc);
-            } else if (tracker_state_rc == 1) {
-                MAIN_LOG("loop=%lu tracker state handler completed id=%u value=%u tracker_mode_on=%d",
-                         g_loop_count, (unsigned)rx_id, (unsigned)rx_value, g_tracker_mode_on);
-            }
-
-            if (tracker_state_rc == 1) {
-                continue;
-            }
 
             drop_tracker_rc = handle_drop_tracker_command(&cam,
                                                           &led_router,
