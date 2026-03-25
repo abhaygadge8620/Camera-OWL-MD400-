@@ -51,12 +51,9 @@ static uint8_t g_selected_view_cam = 0u;
 
 /*
  * ASSUMED tracker UART IDs.
- * Change these 4 IDs to your real tracker command IDs.
+ * Change this ID to your real tracker command ID.
  */
 #define UART_ID_TRACKER_STARTSTOP  90u   /* value 1=start, value 0=stop */
-#define UART_ID_TRACKER_CAMSEL     91u   /* value 1=thermal, 2=day1, 3=day2 */
-#define UART_ID_TRACKER_X          92u   /* raw x coordinate */
-#define UART_ID_TRACKER_Y          93u   /* raw y coordinate */
 #define TELEMETRY_LOSS_LED_OFF_MS  500u
 
 static uint8_t  g_pending_tracker_cam = OWL_TRACKER_DEFAULT_CAM;
@@ -575,37 +572,6 @@ static int handle_tracker_state_command(owl_cam_t *cam,
         return -1;
     }
 
-    /*
-     * Store tracker selected camera / x / y from UART.
-     * Start/Stop is performed by UART_ID_TRACKER_STARTSTOP.
-     */
-    if (id == UART_ID_TRACKER_CAMSEL) {
-        switch (value) {
-        case 1u: g_pending_tracker_cam = OWL_TRACKER_CAM_THERMAL; break;
-        case 2u: g_pending_tracker_cam = OWL_TRACKER_CAM_DAY1;    break;
-        case 3u: g_pending_tracker_cam = OWL_TRACKER_CAM_DAY2;    break;
-        default:
-            MAIN_LOG("loop=%lu tracker camsel unsupported raw value=%u", loop_count, (unsigned)value);
-            return 1;
-        }
-
-        MAIN_LOG("loop=%lu tracker cam select pending cam=%u",
-                 loop_count, (unsigned)g_pending_tracker_cam);
-        return 1;
-    }
-
-    if (id == UART_ID_TRACKER_X) {
-        g_pending_tracker_x = (uint16_t)value;
-        MAIN_LOG("loop=%lu tracker x pending=%u", loop_count, (unsigned)g_pending_tracker_x);
-        return 1;
-    }
-
-    if (id == UART_ID_TRACKER_Y) {
-        g_pending_tracker_y = (uint16_t)value;
-        MAIN_LOG("loop=%lu tracker y pending=%u", loop_count, (unsigned)g_pending_tracker_y);
-        return 1;
-    }
-
     if (id != UART_ID_TRACKER_STARTSTOP) {
         return 0;
     }
@@ -910,6 +876,7 @@ static int handle_optics_reset_command(owl_cam_t *cam,
                                        uint8_t value,
                                        unsigned long loop_count)
 {
+    const uint8_t lrf_led_id = 76u;
     int rc;
     int led_rc;
 
@@ -982,6 +949,7 @@ static int handle_lrf_reset_command(owl_cam_t *cam,
                                     uint8_t value,
                                     unsigned long loop_count)
 {
+    const uint8_t lrf_led_id = 76u;
     int rc;
     int led_rc;
 
@@ -993,7 +961,7 @@ static int handle_lrf_reset_command(owl_cam_t *cam,
         return 0;
     }
 
-    if (value != 1u) {
+    if ((value != 0u) && (value != 1u)) {
         return 0;
     }
 
@@ -1016,6 +984,28 @@ static int handle_lrf_reset_command(owl_cam_t *cam,
         MAIN_LOG("loop=%lu lrf reset failed id=%u value=%u rc=%d",
                  loop_count, (unsigned)id, (unsigned)value, rc);
         return -2;
+    }
+
+    rc = call_cam_bool_with_recover(owl_cam_lrf_align_pointer,
+                                    cam,
+                                    led_router,
+                                    false,
+                                    cam_cfg,
+                                    cam_tcp_port,
+                                    telemetry_enable,
+                                    loop_count,
+                                    "owl_cam_lrf_align_pointer");
+    if (rc != OWL_OK) {
+        MAIN_LOG("loop=%lu lrf reset pointer off failed id=%u value=%u rc=%d",
+                 loop_count, (unsigned)id, (unsigned)value, rc);
+        return -2;
+    }
+
+    rc = uart_send_control(led_router->uart, lrf_led_id, 0u);
+    if (rc != 0) {
+        MAIN_LOG("loop=%lu lrf reset pointer led off uart send failed led_id=%u rc=%d",
+                 loop_count, (unsigned)lrf_led_id, rc);
+        return -3;
     }
 
     MAIN_LOG("loop=%lu lrf reset ACK ok id=%u value=%u",
