@@ -10,7 +10,6 @@ Frame format:
 
 import argparse
 import configparser
-import os
 import serial
 
 START = 0xAA
@@ -35,7 +34,6 @@ def load_id_maps(cfg_path: str):
     id_map = {}
     for section, kind in (
         ("INPUT_BUTTON_IDS", "BUTTON"),
-        ("BUTTON_LED_IDS", "BUTTON_LED"),
         ("INPUT_SWITCH_IDS", "SWITCH"),
         ("LED_IDS", "LED"),
         ("KNOB_IDS", "KNOB"),
@@ -92,11 +90,10 @@ class StreamParser:
 
 
 def main() -> int:
-    default_cfg = os.path.join(os.path.dirname(__file__), "config.ini")
     parser = argparse.ArgumentParser(description="UART MCU RX simulator (read from PC app)")
-    parser.add_argument("--port", default="COM9", help="COM port (default: COM9)")
+    parser.add_argument("--port", default="/dev/ttyUSB0", help="Serial device (default: /dev/ttyUSB0)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate")
-    parser.add_argument("--config", default=default_cfg, help="Path to config.ini for ID decoding")
+    parser.add_argument("--config", default="config.ini", help="Path to config.ini for ID decoding")
     args = parser.parse_args()
 
     stream = StreamParser()

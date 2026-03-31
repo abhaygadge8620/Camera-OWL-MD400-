@@ -4,15 +4,33 @@
 #include <stdint.h>
 #include <stddef.h>
 
-typedef struct {
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define API2_MAX_JSON 2048u
+
+typedef enum
+{
+    API2_CH_CAMERA = 0,
+    API2_CH_JOYSTICK = 1,
+    API2_CH_BUTTON_LED = 2,
+    API2_CH_COUNT = 3
+} api2_channel_t;
+
+typedef struct
+{
     char group_ip[32];
     uint16_t port;
-    char iface_ip[32];
-    uint8_t ttl;
-    uint8_t loopback;
-} api2_cfg_t;
+    uint8_t enabled;
+} api2_channel_cfg_t;
 
-typedef struct {
+/*
+ * Full old camera telemetry content preserved.
+ * This matches the old CAM1 payload meaning, but now carried in JSON.
+ */
+typedef struct
+{
     uint8_t  mode;
     uint8_t  tracker_mode;
     uint8_t  thermal_nuc_status;
@@ -36,51 +54,115 @@ typedef struct {
     uint8_t  pwr_overall;
 } api2_cam1_status_t;
 
+typedef struct
+{
+    char iface_ip[32];
+    uint8_t ttl;
+    uint8_t loopback;
+
+    api2_channel_cfg_t camera;
+    api2_channel_cfg_t joystick;
+    api2_channel_cfg_t button_led;
+
+    uint8_t camera_id;
+} api2_cfg_t;
+
+/* -------------------------------------------------------------------------- */
+/* Lifecycle                                                                   */
+/* -------------------------------------------------------------------------- */
+
 int api2_init(const api2_cfg_t* cfg);
 void api2_shutdown(void);
 
-int api2_send_can_frame(
-        uint32_t can_id,
-        uint8_t is_ext,
-        uint8_t dlc,
-        const uint8_t* data);
+/* -------------------------------------------------------------------------- */
+/* Generic JSON send / receive                                                 */
+/* -------------------------------------------------------------------------- */
 
-int api2_poll_led_status(
-        uint8_t* led_bits_out,
-        uint16_t led_bytes_expected);
+/*
+ * Send raw JSON string on a particular multicast channel.
+ * Returns bytes sent on success, negative on error.
+ */
+int api2_send_json_string(api2_channel_t ch, const char* json_str);
 
-int api2_send_tlm1(
-        uint32_t seq,
-        uint8_t camera_id,
-        const char* topic,
-        const char* value);
+/*
+ * Receive raw JSON string from a particular multicast channel.
+ * Returns:
+ *   >0 : number of bytes received
+ *    0 : no packet available (non-blocking)
+ *   <0 : error
+ */
+int api2_recv_json_string(api2_channel_t ch, char* buf, size_t buf_sz);
 
+/* -------------------------------------------------------------------------- */
+/* Camera telemetry JSON (full old camera telemetry content preserved)         */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Sends a JSON message of type "camera_telem" on camera multicast channel.
+ */
 int api2_send_cam1(
         uint32_t seq,
         uint8_t camera_id,
         const api2_cam1_status_t* st);
 
-int api2_send_cmd1(
-        uint32_t seq,
-        uint8_t camera_id,
-        uint8_t cmd_type,
-        const uint8_t* arg_buf,
-        uint16_t arg_len);
-
-int api2_send_led1(
-        const uint8_t* led_bits,
-        uint16_t led_bytes);
-
-int api2_poll_cmd1(
-        uint32_t* seq_out,
-        uint8_t* camera_id_out,
-        uint8_t* cmd_type_out,
-        uint8_t* arg_buf,
-        uint16_t* arg_len_inout);
-
+/*
+ * Polls camera multicast channel and parses JSON type "camera_telem".
+ * Returns:
+ *   1 : parsed one valid camera_telem packet
+ *   0 : no packet or packet is not camera_telem
+ *  <0 : error / invalid packet
+ */
 int api2_poll_cam1(
         uint32_t* seq_out,
         uint8_t* camera_id_out,
         api2_cam1_status_t* st_out);
+
+/* -------------------------------------------------------------------------- */
+/* Joystick JSON                                                               */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Receives raw joystick JSON string from joystick multicast channel.
+ * This is useful if another process publishes joystick JSON.
+ */
+int api2_poll_joystick_json(char* buf, size_t buf_sz);
+
+/* -------------------------------------------------------------------------- */
+/* Button / LED JSON                                                           */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Sends button/LED JSON on button_led multicast channel.
+ * Example JSON:
+ * {
+ *   "type":"button_led",
+ *   "seq":10,
+ *   "name":"DAY",
+ *   "value":1,
+ *   "direction":"tx",
+ *   "source":"camera_telem"
+ * }
+ */
+int api2_send_button_led_json(
+        uint32_t seq,
+        const char* name,
+        uint8_t value,
+        const char* direction,
+        const char* source);
+
+/*
+ * Receives raw button_led JSON string from button_led multicast channel.
+ */
+int api2_poll_button_led_json(char* buf, size_t buf_sz);
+
+/* -------------------------------------------------------------------------- */
+/* Helpers for loading config values into api2_cfg_t                           */
+/* -------------------------------------------------------------------------- */
+
+void api2_cfg_set_defaults(api2_cfg_t* cfg);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* API2_MCAST_WIN_H */

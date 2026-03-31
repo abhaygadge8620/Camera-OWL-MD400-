@@ -43,6 +43,8 @@ typedef enum
 #define OWL_ADDR_DAY_POWER              (0x0019u)
 #define OWL_ADDR_THERMAL_POWER          (0x001Au)
 #define OWL_ADDR_LRF_POWER              (0x001Cu)
+#define OWL_ADDR_PIP                    (0x002Fu)
+#define OWL_ADDR_PIP_LOCATION           (0x0030u)
 
 /* LRF addresses */
 #define OWL_ADDR_LRF_RANGE_MEAS         (0x0001u)
@@ -83,6 +85,16 @@ typedef enum
 #define OWL_POWER_OFF                   (0x02u)
 #define OWL_POWER_REBOOT                (0x03u)
 
+/* PIP values */
+#define OWL_PIP_ON                      (0x01u)
+#define OWL_PIP_OFF                     (0x02u)
+
+/* PIP location values */
+#define OWL_PIP_LOC_TOP_LEFT            (0x01u)
+#define OWL_PIP_LOC_TOP_RIGHT           (0x02u)
+#define OWL_PIP_LOC_BOTTOM_LEFT         (0x03u)
+#define OWL_PIP_LOC_BOTTOM_RIGHT        (0x04u)
+
 /* Zoom/focus values */
 #define OWL_ZOOM_MODE_CONTINUOUS        (0x01u)
 #define OWL_ZOOM_MODE_MANUAL            (0x02u)
@@ -90,6 +102,14 @@ typedef enum
 #define OWL_ZOOM_OUT                    (0x02u)
 #define OWL_FOCUS_FAR                   (0x01u)
 #define OWL_FOCUS_NEAR                  (0x02u)
+#define OWL_LENS_STOP_ZOOM              (0x01u)
+#define OWL_LENS_STOP_FOCUS             (0x02u)
+#define OWL_THERMAL_LENS_RESERVED       (0x01u)
+#define OWL_DAY_LOWLIGHT_SPEED_MIN      (0x01u)
+#define OWL_DAY_LOWLIGHT_SPEED_MAX      (0x07u)
+#define OWL_DAY_NORMAL_SPEED_MIN        (0x01u)
+#define OWL_DAY_NORMAL_SPEED_MAX        (0x07u)
+#define OWL_DAY_NORMAL_MANUAL_STEP      (0x00u)
 
 /* LRF single measurement modes */
 #define OWL_LRF_SMM                     (0x01u)
@@ -258,6 +278,10 @@ int  owl_cam_write(owl_cam_t *cam, owl_iface_t iface, uint16_t addr,
 int  owl_cam_liveliness(owl_cam_t *cam, bool *alive);
 int  owl_cam_set_telemetry(owl_cam_t *cam, bool enable);
 int  owl_cam_restart(owl_cam_t *cam, uint8_t mode);
+int  owl_cam_set_pip(owl_cam_t *cam, bool enable);
+int  owl_cam_get_pip(owl_cam_t *cam, bool *enabled);
+int  owl_cam_set_pip_location(owl_cam_t *cam, uint8_t location);
+int  owl_cam_get_pip_location(owl_cam_t *cam, uint8_t *location);
 
 /* power */
 int  owl_cam_day_power(owl_cam_t *cam, uint8_t mode);
@@ -278,10 +302,10 @@ int  camera_iface_cmd_w6(uint8_t mode_value);
 int  camera_iface_cmd_w7(uint8_t disable_mask);
 
 /* tracker controls */
-//int  owl_tracker_mode_on(uint8_t cam, uint16_t x, uint16_t y);
-//int  owl_tracker_mode_off(uint8_t cam, uint16_t x, uint16_t y);
+int  owl_tracker_mode_on(uint8_t cam, uint16_t x, uint16_t y);
+int  owl_tracker_mode_off(uint8_t cam, uint16_t x, uint16_t y);
 int  owl_tracker_read_all(tracker_state_t *st);
-//int  owl_tracker_set_coord(uint8_t cam, uint16_t x, uint16_t y, uint8_t mode);
+int  owl_tracker_set_coord(uint8_t cam, uint16_t x, uint16_t y, uint8_t mode);
 int  owl_tracker_set_box(uint8_t cam, uint8_t w, uint8_t h);
 int  owl_tracker_set_mode(uint8_t cam, uint8_t mode);
 int  owl_tracker_set_lock(uint8_t cam, uint8_t mode);
@@ -305,18 +329,26 @@ int  owl_cam_lrf_read_target_range(owl_cam_t *cam, uint16_t *out_range_m);
 /* Day1 low light lens */
 int  owl_cam_day_lowlight_zoom(owl_cam_t *cam, uint8_t zoom_mode, uint8_t direction, uint8_t speed);
 int  owl_cam_day_lowlight_zoom_stop(owl_cam_t *cam);
+int  owl_cam_day_lowlight_focus(owl_cam_t *cam, uint8_t focus_mode, uint8_t direction, uint8_t speed);
+int  owl_cam_day_lowlight_focus_stop(owl_cam_t *cam);
 
 /* Day2 normal lens */
 int  owl_cam_day_normal_zoom(owl_cam_t *cam, uint8_t zoom_mode, uint8_t direction, uint8_t speed);
 int  owl_cam_day_normal_zoom_stop(owl_cam_t *cam);
+int  owl_cam_day_normal_focus(owl_cam_t *cam, uint8_t focus_mode, uint8_t direction, uint8_t speed);
+int  owl_cam_day_normal_focus_stop(owl_cam_t *cam);
 
 /* Legacy day lens API (single day interface) */
 int  owl_cam_day_zoom(owl_cam_t *cam, uint8_t zoom_mode, uint8_t direction);
 int  owl_cam_day_zoom_stop(owl_cam_t *cam);
+int  owl_cam_day_focus(owl_cam_t *cam, uint8_t focus_mode, uint8_t direction);
+int  owl_cam_day_focus_stop(owl_cam_t *cam);
 
 /* Thermal lens */
 int  owl_cam_thermal_zoom(owl_cam_t *cam, uint8_t zoom_mode, uint8_t direction);
 int  owl_cam_thermal_zoom_stop(owl_cam_t *cam);
+int  owl_cam_thermal_focus(owl_cam_t *cam, uint8_t focus_mode, uint8_t direction);
+int  owl_cam_thermal_focus_stop(owl_cam_t *cam);
 
 /* telemetry */
 int  camera_telem_open(owl_telem_t *ctx, const char *bind_ip, uint16_t port);

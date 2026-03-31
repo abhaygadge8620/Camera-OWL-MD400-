@@ -1,352 +1,180 @@
 # Camera-OWL-MD400-
 
-Windows C application that connects a WCS button panel over UART to an OWL-MD400 / OWL-MD860 camera over Ethernet TCP, keeps panel LEDs synchronized, publishes telemetry over MQTT and optional UDP multicast, and switches local VLC streams for the selected camera view.
+Linux C11 application that bridges a UART-based WCS button panel to an OWL-MD400 / OWL-MD860 camera over Ethernet, publishes telemetry over MQTT and optional UDP multicast, keeps panel LEDs synchronized, and launches VLC for RTSP viewing.
 
 ## Overview
 
-The project acts as a bridge between:
+The Linux port preserves the existing project architecture:
 
-- A UART-based WCS control panel
-- The OWL camera Ethernet control interface
-- Camera telemetry
-- Panel LEDs
-- MQTT publishing
-- Optional UDP multicast publishing
-- VLC RTSP stream viewing
+- `main.c` remains the application entry point.
+- `OWL_MD860/` still contains the camera protocol, telemetry, tracker, multicast, MQTT, CRC, and INI logic.
+- `UART API/` still contains the UART transport, frame protocol, and panel ID/config parsing.
+- `led_status_router.*` and `camera_command_router.*` remain separate routing layers.
 
-The main application entry point is [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c). Most project behavior is implemented there. The camera protocol implementation lives under [`OWL_MD860`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860). UART parsing and UART TX live under [`UART API`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API).
+The Windows-only transport code has been replaced with Linux/POSIX implementations:
 
-## Project Structure
+- `Sleep()` -> monotonic `nanosleep()` wrapper
+- Win32 console handler -> POSIX signal handling
+- Winsock -> POSIX sockets/select/close/errno
+- Win32 COM port access -> `termios` serial access on `/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/ttyS*`
 
-- [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c)
-  Main runtime loop. Reads UART frames, calls camera functions, updates LEDs, processes telemetry, handles reconnect, manages VLC.
-- [`led_status_router.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/led_status_router.c)
-  Maps logical button names to UART LED IDs and sends LED ON/OFF frames.
-- [`led_status_router.h`](c:/WCSBTNCAM/Camera-OWL-MD400-/led_status_router.h)
-  LED router interface and per-button cached state.
-- [`camera_command_router.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/camera_command_router.c)
-  Older routing logic / helper code. Not the main active control path for the current runtime.
-- [`OWL_MD860/camera_iface.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/camera_iface.c)
-  Low-level camera TCP protocol, telemetry receive, tracker helpers, RTSP helpers, VLC switching.
-- [`OWL_MD860/camera_iface.h`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/camera_iface.h)
-  Public camera API used by `main.c`.
-- [`OWL_MD860/camera_mqtt.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/camera_mqtt.c)
-  MQTT connect and publish helpers.
-- [`OWL_MD860/api2_mcast_win.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/api2_mcast_win.c)
-  UDP multicast publisher support.
-- [`UART API/config_ini.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API/config_ini.c)
-  Parses UART panel config and ID mappings.
-- [`UART API/uart_protocol.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API/uart_protocol.c)
-  UART frame encode/decode and TX helper `uart_send_control(...)`.
-- [`UART API/uart_win.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API/uart_win.c)
-  Windows COM port open/read/write helpers.
-- [`UART API/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API/config.ini)
-  UART port settings and panel ID mapping.
-- [`OWL_MD860/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/config.ini)
-  Camera IP, MQTT config, UDP multicast config.
-- [`Makefile`](c:/WCSBTNCAM/Camera-OWL-MD400-/Makefile)
-  GCC build definition for Windows.
-- [`MD400_ICD_23_12_2025.pdf`](c:/WCSBTNCAM/Camera-OWL-MD400-/MD400_ICD_23_12_2025.pdf)
-  Protocol/reference document for the camera.
+## Folder Structure
 
-## Runtime Flow
+- `main.c`: main runtime loop and command handling
+- `platform_compat.c`, `platform_compat.h`: minimal timing/signal/string portability helpers
+- `led_status_router.c`, `led_status_router.h`: LED state routing back to UART panel
+- `camera_command_router.c`, `camera_command_router.h`: camera command routing helpers
+- `Makefile`: Linux build for the full application
+- `README.md`: Linux setup/build/run guide
+- `OWL_MD860/`: camera Ethernet control, telemetry, multicast, MQTT, tracker, parsing helpers
+- `UART API/`: UART transport, UART protocol, UART config parsing, sample simulator scripts, component Makefile
+- `MD400_ICD_23_12_2025.pdf`: protocol reference document
 
-At startup, the application:
+## Linux Dependencies
 
-1. Loads UART config from [`UART API/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API/config.ini).
-2. Loads camera, MQTT, and UDP multicast settings from [`OWL_MD860/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/config.ini).
-3. Connects MQTT and publishes initial config if possible.
-4. Starts UDP multicast publishing support if enabled.
-5. Opens the UART COM port.
-6. Opens the camera TCP connection and checks liveliness.
-7. Enables or disables telemetry on the camera.
-8. Reads and caches RTSP URLs from the camera.
-9. Initializes LED routing state.
-10. Opens the telemetry UDP receiver if telemetry is enabled.
+### Ubuntu / Debian
 
-Then the app enters the main loop:
+Install the required packages:
 
-- Read one UART frame
-- Decode `id` and `value`
-- Try each command handler in order
-- Execute the first matching handler
-- Poll telemetry
-- Publish telemetry to MQTT
-- Update LEDs from telemetry
-- Recover camera connection automatically after `OWL_ERR_IO`
-
-On shutdown, the app:
-
-- Closes telemetry
-- Stops UDP multicast
-- Closes MQTT
-- Stops VLC
-- Closes UART
-- Sends tracker STOP if tracker was active
-- Closes the camera connection
-
-## Main Runtime State
-
-Important globals in [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c):
-
-- `g_running`
-  Main loop exit flag set by Windows console control handler.
-- `g_loop_count`
-  Loop counter used in logs.
-- `g_tracker_mode_on`
-  Current tracker ON/OFF state.
-- `g_last_tracker_state`
-  Last tracker command used for safe stop at shutdown.
-- `g_rtsp_urls`
-  Cached RTSP URLs for thermal, day, and low-light streams.
-- `g_rtsp_urls_valid`
-  Indicates whether RTSP cache is valid.
-- `g_selected_view_cam`
-  Currently selected camera view used by tracker/view logic.
-
-## Current Active UART Mapping
-
-The active input/LED mapping comes from [`UART API/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API/config.ini).
-
-### Button IDs
-
-- `OPTICS_RESET = 2`
-- `LRF_RESET = 3`
-- `DAY = 11`
-- `LOW_LIGHT = 12`
-- `THERMAL = 13`
-- `DROP = 14`
-- `LRF = 75`
-
-### Knob IDs
-
-- `MODE = 52`
-- `FREQUENCY = 53`
-
-### LED IDs
-
-- `OPTICS_RESET_LED = 61`
-- `LRF_RESET_LED = 62`
-- `DAY_LED = 70`
-- `LOW_LIGHT_LED = 71`
-- `THERMAL_LED = 72`
-- `DROP_LED = 73`
-- `LRF_LED = 76`
-- `SW_LRF_LED = 81`
-
-## Current Active Command Behavior
-
-This section describes the current active behavior in [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c).
-
-### `id 11`: DAY
-
-Handled by `handle_camera_view_switch_command()`.
-
-- Switches tracker camera to day-normal
-- Switches VLC stream to the configured RTSP URL
-- Turns DAY LED on and LOW_LIGHT / THERMAL LEDs off
-- If tracker is already active, restarts tracker centered on the selected camera
-
-### `id 12`: LOW_LIGHT
-
-Handled by `handle_camera_view_switch_command()`.
-
-- Switches tracker camera to day-low-light
-- Switches VLC stream
-- Updates camera selection LEDs
-- Restarts tracker on selected camera if tracker is active
-
-### `id 13`: THERMAL
-
-Handled by `handle_camera_view_switch_command()`.
-
-- Switches tracker camera to thermal
-- Switches VLC stream
-- Updates camera selection LEDs
-- Restarts tracker on selected camera if tracker is active
-
-### `id 14`: DROP
-
-Handled by `handle_drop_tracker_command()`.
-
-- `value 1` starts tracker on the currently selected camera view
-- `value 0` stops tracker on the currently selected camera view
-- Uses center coordinates for the selected camera
-- Updates DROP LED
-
-### `id 2`: OPTICS_RESET
-
-Handled by `handle_optics_reset_command()`.
-
-- `value 1`
-  Calls `owl_cam_restart(cam, OWL_RESTART_SERVICE)` and turns `OPTICS_RESET` LED on
-- `value 0`
-  Sends UART LED OFF command for the mapped `OPTICS_RESET` LED and syncs LED router state
-
-### `id 3`: LRF_RESET
-
-Handled by `handle_lrf_reset_command()`.
-
-- `value 1` or `value 0`
-  Both values are accepted by the current code
-- Action sequence:
-  - Turn `LRF_RESET` LED on
-  - Call `owl_cam_lrf_stop()`
-  - Call `owl_cam_lrf_align_pointer(cam, false)`
-  - Send UART LED OFF for `LRF_LED` `id 76`
-  - Turn `LRF_RESET` LED off
-
-### `id 52`: LRF Single Measure Mode
-
-Handled by `handle_lrf_single_measure_mode_command()`.
-
-Raw value mapping:
-
-- `0 -> OWL_LRF_SMM`
-- `2 -> OWL_LRF_CH1`
-- `1 -> OWL_LRF_CH2`
-
-Calls `owl_cam_lrf_single_measure(...)`.
-
-### `id 53`: LRF Frequency
-
-Handled by `handle_lrf_frequency_command()`.
-
-Raw value mapping:
-
-- `1 -> OWL_LRF_FREQ_1HZ`
-- `4 -> OWL_LRF_FREQ_4HZ`
-- `10 -> OWL_LRF_FREQ_10HZ`
-- `20 -> OWL_LRF_FREQ_20HZ`
-- `100 -> OWL_LRF_FREQ_100HZ`
-- `200 -> OWL_LRF_FREQ_200HZ`
-
-Calls `owl_cam_lrf_set_frequency(...)`.
-
-### `id 75`: LRF Align Pointer
-
-Handled by `handle_lrf_align_pointer_command()`.
-
-- `value 1`
-  Turns pointer ON using `owl_cam_lrf_align_pointer(cam, true)`
-- `value 0`
-  Turns pointer OFF using `owl_cam_lrf_align_pointer(cam, false)`
-
-After the camera command, it sends the same ON/OFF state to UART LED `76`.
-
-## Telemetry Behavior
-
-Telemetry support is implemented in [`OWL_MD860/camera_iface.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/camera_iface.c) and consumed in [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c).
-
-When telemetry is enabled:
-
-- `camera_telem_open(...)` opens the UDP telemetry receiver
-- `camera_telem_recv(...)` reads frames
-- `camera_telem_publish(...)` publishes telemetry through MQTT support
-- `led_status_router_update_from_telem(...)` keeps `SW_LRF` LED synchronized to LRF power status
-
-If telemetry is lost for more than `500 ms`, the app forces `SW_LRF` LED off for safety.
-
-## LED Routing
-
-LED logic is centralized in [`led_status_router.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/led_status_router.c).
-
-Key points:
-
-- Logical names like `DAY`, `LOW_LIGHT`, `THERMAL`, `DROP`, `SW_LRF`, `LRF_RESET`, `OPTICS_RESET` are mapped to actual UART LED IDs.
-- Cached LED state is stored so duplicate UART LED frames are avoided.
-- `led_status_router_set_led(...)` is the main ON/OFF helper.
-- Some flows also send a direct `uart_send_control(...)` frame when explicit LED behavior is needed immediately.
-
-## Camera Recovery
-
-Automatic reconnect is implemented in `recover_camera_connection()` in [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c).
-
-When a camera command returns `OWL_ERR_IO`:
-
-- The connection is closed
-- TCP is reopened
-- Camera liveliness is checked again
-- Telemetry setting is restored
-- RTSP URLs are refreshed
-- Tracker mode is reset to OFF
-
-Wrapper helpers used for this:
-
-- `call_cam_u8_with_recover(...)`
-- `call_cam_noarg_with_recover(...)`
-- `call_cam_bool_with_recover(...)`
-
-## RTSP and VLC Behavior
-
-RTSP helper code is in [`OWL_MD860/camera_iface.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/camera_iface.c).
-
-The app:
-
-- Reads RTSP URLs from the camera once at startup
-- Caches thermal, day, and low-light URLs
-- Uses `owl_cam_vlc_switch_stream(...)` to launch or replace the VLC stream on camera view change
-- Uses `owl_cam_vlc_stop()` when tracker starts or when the app exits
-
-Default VLC path in [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c):
-
-```text
-C:\Program Files\VideoLAN\VLC\vlc.exe
+```bash
+sudo apt update
+sudo apt install -y build-essential pkg-config libpaho-mqtt-dev vlc python3
 ```
 
-## MQTT and UDP Multicast
+Notes:
 
-MQTT helpers are in [`OWL_MD860/camera_mqtt.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/camera_mqtt.c).
+- `build-essential` provides `gcc`, `make`, and standard development tools.
+- `pkg-config` is used by the Makefile when `paho-mqtt3c.pc` is available.
+- `libpaho-mqtt-dev` provides `MQTTClient.h` and `libpaho-mqtt3c`.
+- `vlc` is optional if you do not need local RTSP viewing, but the stream-switch feature expects it.
 
-The app:
+### Fedora / RHEL / Rocky / AlmaLinux
 
-- Connects to the broker from [`OWL_MD860/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/config.ini)
-- Publishes initial camera config/state
-- Publishes telemetry values
+```bash
+sudo dnf install -y gcc make pkgconf-pkg-config paho-c-devel vlc python3
+```
 
-UDP multicast helpers are in [`OWL_MD860/api2_mcast_win.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/api2_mcast_win.c).
+### Arch Linux
 
-When enabled, the app initializes multicast publishing using:
+```bash
+sudo pacman -S --needed base-devel pkgconf paho-mqtt-c vlc python
+```
 
-- group IP
-- interface IP
-- port
-- TTL
-- loopback
-- camera ID
+If your distro does not package Eclipse Paho C, install it from source and make sure `MQTTClient.h` and `libpaho-mqtt3c` are visible to the compiler/linker.
 
-from [`OWL_MD860/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/config.ini).
+## Build
+
+From the project root:
+
+```bash
+cd Camera-OWL-MD400-
+make clean
+make
+```
+
+Expected output:
+
+- `bin/wcsbtncam`
+
+The component Makefile under `UART API/` now builds a reusable static archive because that folder does not contain a standalone `main()` entry point:
+
+```bash
+cd "UART API"
+make clean
+make
+```
+
+Expected output:
+
+- `UART API/libuart_bridge.a`
+
+## Run
+
+From the project root:
+
+```bash
+cd Camera-OWL-MD400-
+./bin/wcsbtncam
+```
+
+The application loads:
+
+- `UART API/config.ini`
+- `OWL_MD860/config.ini`
+
+so run it from the project root unless you change the config paths in code.
+
+## Serial Device Setup
+
+### Find the serial device name
+
+Common Linux serial device names:
+
+- `/dev/ttyUSB0`
+- `/dev/ttyUSB1`
+- `/dev/ttyACM0`
+- `/dev/ttyS0`
+
+Useful commands:
+
+```bash
+ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS* 2>/dev/null
+```
+
+```bash
+dmesg | tail -n 50
+```
+
+```bash
+udevadm info -q property -n /dev/ttyUSB0
+```
+
+### Set serial permissions
+
+Check the device owner/group:
+
+```bash
+ls -l /dev/ttyUSB0
+```
+
+Most systems use the `dialout` group. Add your user and re-login:
+
+```bash
+sudo usermod -aG dialout "$USER"
+```
+
+For systems using `uucp` instead:
+
+```bash
+sudo usermod -aG uucp "$USER"
+```
+
+Temporary quick test:
+
+```bash
+sudo chmod a+rw /dev/ttyUSB0
+```
+
+Use that only for bring-up, not as a permanent fix.
 
 ## Configuration
 
-### UART Config
+### UART API/config.ini
 
-File: [`UART API/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API/config.ini)
-
-Important fields:
-
-- `device`
-- `baud`
-- `read_timeout_ms`
-- `INPUT_BUTTON_IDS`
-- `INPUT_SWITCH_IDS`
-- `BUTTON_LED_IDS`
-- `KNOB_IDS`
-
-Current UART device default:
+Default Linux example:
 
 ```ini
 [UART]
-device=COM4
+device=/dev/ttyUSB0
 baud=115200
-read_timeout_ms=0
+read_timeout_ms=20
 ```
 
-### Camera Config
+Update `device=` to match your actual port.
 
-File: [`OWL_MD860/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/config.ini)
+### OWL_MD860/config.ini
 
-Current example values:
+Review and adjust at least:
 
 ```ini
 [mqtt]
@@ -370,91 +198,195 @@ loopback     = 1
 camera_id    = 1
 ```
 
-## Build
+Notes:
 
-The project uses GCC on Windows with the [`Makefile`](c:/WCSBTNCAM/Camera-OWL-MD400-/Makefile).
+- `camera.ip` must match the actual camera IP on your Linux network.
+- `udp_multicast.iface_ip=0.0.0.0` is acceptable for the default interface selection on Linux.
+- If multicast must leave a specific interface, set `iface_ip` to that interface's IPv4 address.
 
-Linked libraries:
+## MQTT Notes
 
-- `ws2_32`
-- `kernel32`
-- `paho-mqtt3c`
+The build links against the Paho C synchronous client library:
 
-Build command:
+- library: `paho-mqtt3c`
+- header: `MQTTClient.h`
 
-```powershell
+The root Makefile tries `pkg-config --cflags --libs paho-mqtt3c` first and falls back to `-lpaho-mqtt3c` if no `.pc` file is present.
+
+## VLC / RTSP Notes
+
+The application still supports RTSP stream switching through VLC.
+
+Linux behavior:
+
+- The default executable name is `vlc`.
+- The app looks for VLC in the configured path first, then on `PATH`.
+- On Linux, the app stops the VLC process that it launched itself before starting the next stream.
+
+Behavior difference from Windows:
+
+- The old Windows code attempted to kill any `vlc.exe` process globally.
+- The Linux port intentionally stops only the VLC child process started by this application.
+- This avoids killing unrelated user VLC sessions.
+
+## Important Linux Commands
+
+Build full application:
+
+```bash
 make
 ```
 
-Expected output executable:
+Run full application:
 
-```text
-bin/wcsbtncam.exe
+```bash
+./bin/wcsbtncam
 ```
 
-The Makefile compiles:
+Build UART component library only:
 
-- `main.c`
-- `camera_command_router.c`
-- `led_status_router.c`
-- all `.c` files under `OWL_MD860`
-- UART support files under `UART API`
+```bash
+make -C "UART API"
+```
 
-## Run
+Check MQTT library visibility:
 
-Typical run flow:
+```bash
+pkg-config --cflags --libs paho-mqtt3c
+```
 
-1. Connect the WCS UART panel to the configured COM port.
-2. Ensure the camera is reachable at the configured IP.
-3. Ensure VLC is installed at the configured path, or update `VLC_EXE_PATH`.
-4. Ensure MQTT broker is reachable if MQTT is required.
-5. Build the executable.
-6. Run `bin/wcsbtncam.exe`.
+Check serial permissions:
 
-## Logging
+```bash
+ls -l /dev/ttyUSB0
+id
+```
 
-Main application logs use the `MAIN_LOG(...)` macro in [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c).
+## Troubleshooting
 
-Logs typically include:
+### Permission denied on serial port
 
-- loop counter
-- incoming UART `id` and `value`
-- camera ACK/failure
-- reconnect attempts
-- LED updates
-- telemetry LED state changes
+Symptoms:
 
-This is the primary source for troubleshooting runtime behavior.
+- `uart_open` fails immediately
+- `Permission denied` from the OS
 
-## Known Current Notes
+Actions:
 
-- Tracker UART IDs `91`, `92`, and `93` are no longer active in the current code.
-- `lrf_reset_clear_deadline` and `optics_reset_clear_deadline` variables exist in the loop, but current active code does not assign future deadlines to them.
-- `camera_command_router.c` exists in the build but the active command routing for the current runtime is centered in [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c).
+- Verify the configured device path exists.
+- Add your user to `dialout` or `uucp`.
+- Re-login after changing groups.
+- Confirm the device is not already opened by another process.
 
-## Primary Files for Future Changes
+Useful commands:
 
-If you need to change behavior, these are the main files to edit:
+```bash
+ls -l /dev/ttyUSB0
+fuser /dev/ttyUSB0
+```
 
-- [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c)
-  For button-to-action logic and runtime flow
-- [`UART API/config.ini`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API/config.ini)
-  For panel ID mapping
-- [`led_status_router.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/led_status_router.c)
-  For LED routing and LED caching
-- [`OWL_MD860/camera_iface.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860/camera_iface.c)
-  For low-level camera protocol behavior
+### Missing MQTT library
 
-## Summary
+Symptoms:
 
-This project is a Windows camera control bridge that:
+- compile fails on `MQTTClient.h`
+- link fails on `-lpaho-mqtt3c`
 
-- reads UART button and knob inputs
-- converts them to OWL camera Ethernet commands
-- synchronizes panel LEDs
-- switches RTSP streams in VLC
-- publishes telemetry to MQTT
-- optionally publishes over UDP multicast
-- reconnects automatically after camera I/O errors
+Actions:
 
-The current active logic is centered in [`main.c`](c:/WCSBTNCAM/Camera-OWL-MD400-/main.c), with camera transport in [`OWL_MD860`](c:/WCSBTNCAM/Camera-OWL-MD400-/OWL_MD860) and UART handling in [`UART API`](c:/WCSBTNCAM/Camera-OWL-MD400-/UART%20API).
+- Install `libpaho-mqtt-dev` or your distro equivalent.
+- Verify `pkg-config --libs paho-mqtt3c` works.
+- If installed from source, export `PKG_CONFIG_PATH`, `CFLAGS`, or `LDFLAGS` accordingly.
+
+### Socket issues
+
+Symptoms:
+
+- camera TCP connect fails
+- telemetry receive never starts
+- multicast send/init fails
+
+Actions:
+
+- Verify camera IP reachability with `ping`.
+- Confirm TCP port `8088` is reachable from the Linux machine.
+- Confirm telemetry UDP and multicast ports are not blocked by firewall rules.
+- If multicast is interface-sensitive, set `iface_ip` to the correct NIC address.
+
+Useful commands:
+
+```bash
+ip addr
+ip route
+ping 192.168.8.238
+ss -lun
+```
+
+### No camera connection
+
+Symptoms:
+
+- `owl_cam_open` fails
+- liveliness check fails
+
+Actions:
+
+- Re-check `OWL_MD860/config.ini` camera IP.
+- Verify the camera and Linux host are on the same network.
+- Confirm the camera control service is active.
+- Test reachability from Linux with `nc -vz <camera-ip> 8088` if `netcat` is installed.
+
+### No UART data
+
+Symptoms:
+
+- repeated UART idle logs
+- no decoded frames
+
+Actions:
+
+- Verify the Linux serial device name.
+- Confirm baud rate matches the panel MCU.
+- Confirm signal wiring and USB-UART adapter health.
+- Use the Python simulator scripts with Linux device names for loopback testing.
+
+### VLC does not start
+
+Symptoms:
+
+- stream switch command succeeds but no player appears
+
+Actions:
+
+- Confirm `vlc` is installed and runnable from the shell.
+- If VLC is outside `PATH`, pass an explicit VLC path through the existing call site or change the `VLC_EXE_PATH` default.
+- Test the RTSP URL manually in VLC.
+
+## Manual Steps Required On The Linux Machine
+
+1. Install build dependencies and the Paho MQTT C library.
+2. Install VLC if RTSP viewing is required.
+3. Update `UART API/config.ini` with the correct `/dev/tty*` path.
+4. Update `OWL_MD860/config.ini` with the correct camera IP, broker, and multicast settings.
+5. Add your user to the serial-port group such as `dialout`.
+6. Re-login after the group change.
+7. Build with `make` and run `./bin/wcsbtncam` from the project root.
+
+## Porting Notes
+
+The following functionality is preserved on Linux:
+
+- camera TCP control
+- telemetry UDP receive
+- UDP multicast transmit/receive helpers
+- MQTT publishing
+- tracker command flow
+- LED routing
+- UART frame protocol
+- INI/config parsing
+
+Practical Linux-equivalent behavior where exact Windows semantics were not retained:
+
+- Console shutdown now uses POSIX signals instead of Win32 console events.
+- VLC process management is scoped to the process started by this app instead of terminating unrelated system-wide VLC processes.
+- The UART API subdirectory now builds a static library instead of a standalone `.exe`, because that submodule has no local program entry point.

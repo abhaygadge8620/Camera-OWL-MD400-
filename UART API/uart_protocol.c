@@ -1,5 +1,6 @@
 #include "uart_protocol.h"
-
+#include<stdio.h>
+#include <stdint.h>
 #include <string.h>
 
 static uart_stream_parser_t g_parser;
@@ -121,9 +122,6 @@ int uart_read_and_parse(uart_t *uart, uint8_t *id, uint8_t *value)
     int rc;
     int parse_rc;
     int parse_error = 0;
-    unsigned int bytes_processed = 0U;
-
-    enum { UART_MAX_BYTES_PER_CALL = 64 };
 
     if (g_parser_initialized == 0)
     {
@@ -131,31 +129,19 @@ int uart_read_and_parse(uart_t *uart, uint8_t *id, uint8_t *value)
         g_parser_initialized = 1;
     }
 
-    while (bytes_processed < UART_MAX_BYTES_PER_CALL)
+    rc = uart_read_byte(uart, &b);
+    printf("uart_read_byte rc=%d byte=0x%02X\n", rc, b);
+    if (rc <= 0)
     {
-        rc = uart_read_byte(uart, &b);
-        if (rc <= 0)
-        {
-            if (bytes_processed == 0U)
-            {
-                return rc;
-            }
-            return 0;
-        }
-
-        bytes_processed++;
-        parse_rc = uart_stream_parser_feed(&g_parser, b, id, value, &parse_error);
-        if (parse_rc == -1)
-        {
-            g_last_parse_error = parse_error;
-        }
-        if (parse_rc != 0)
-        {
-            return parse_rc;
-        }
+        return rc;
     }
 
-    return 0;
+    parse_rc = uart_stream_parser_feed(&g_parser, b, id, value, &parse_error);
+    if (parse_rc == -1)
+    {
+        g_last_parse_error = parse_error;
+    }
+    return parse_rc;
 }
 
 int uart_get_last_parse_error(void)

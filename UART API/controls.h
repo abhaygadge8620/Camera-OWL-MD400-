@@ -5,9 +5,9 @@
 
 enum
 {
-    BUTTON_COUNT = 16,
-    BUTTON_LED_COUNT = 17,
-    SWITCH_COUNT = 18,
+    BUTTON_COUNT = 22,
+    BUTTON_LED_COUNT = 29,
+    SWITCH_COUNT = 19,
     LED_COUNT = 22,
     KNOB_COUNT = 2,
     MODE_VALUE_COUNT = 8,

@@ -10,7 +10,6 @@ Frame format:
 
 import argparse
 import configparser
-import os
 import time
 import serial
 import threading
@@ -104,68 +103,58 @@ def build_id_decode_map(cfg_path: str):
     return out
 
 
-def build_target_tx_sequence(cfg_path: str):
+def build_full_test_sequence(cfg_path: str):
     cfg = configparser.ConfigParser(interpolation=None)
     cfg.optionxform = str
     cfg.read(cfg_path, encoding="ascii")
 
     buttons = load_u8_map(cfg, "INPUT_BUTTON_IDS")
-    button_map = {name: frame_id for name, frame_id in buttons}
+    switches = load_u8_map(cfg, "INPUT_SWITCH_IDS")
     knobs = load_u8_map(cfg, "KNOB_IDS")
-    knob_map = {name: frame_id for name, frame_id in knobs}
-    target_names = ("LRF_RESET", "DAY", "LOW_LIGHT", "THERMAL")
+
+    mode_vals = load_u8_map(cfg, "MODE_VALUES")
+    freq_vals = load_u8_map(cfg, "FREQUENCY_VALUES")
+
+    mode_ids = [x for x in knobs if x[0] == "MODE"]
+    freq_ids = [x for x in knobs if x[0] == "FREQUENCY"]
 
     seq = []
-    for name in target_names:
-        frame_id = button_map.get(name)
-        if frame_id is None:
-            continue
+
+    for name, frame_id in buttons:
         seq.append(("BUTTON", name, frame_id, 1))
         seq.append(("BUTTON", name, frame_id, 0))
 
-    freq_id = knob_map.get("FREQUENCY")
-    if freq_id is not None:
-        for value in (1, 4, 10, 20, 100, 200):
-            seq.append(("KNOB", "FREQUENCY", freq_id, value))
+    for name, frame_id in switches:
+        seq.append(("SWITCH", name, frame_id, 1))
+        seq.append(("SWITCH", name, frame_id, 0))
+
+    if mode_ids:
+        mode_id = mode_ids[0][1]
+        for mode_name, mode_val in mode_vals:
+            seq.append(("KNOB", f"MODE:{mode_name}", mode_id, mode_val))
+
+    if freq_ids:
+        freq_id = freq_ids[0][1]
+        for freq_name, freq_val in freq_vals:
+            seq.append(("KNOB", f"FREQUENCY:{freq_name}", freq_id, freq_val))
+
     return seq
 
 
-def build_console_targets(cfg_path: str):
-    cfg = configparser.ConfigParser(interpolation=None)
-    cfg.optionxform = str
-    cfg.read(cfg_path, encoding="ascii")
-
-    buttons = load_u8_map(cfg, "INPUT_BUTTON_IDS")
-    button_map = {name: frame_id for name, frame_id in buttons}
-    out = {}
-    for name in ("DAY", "LOW_LIGHT", "THERMAL", "DROP"):
-        frame_id = button_map.get(name)
-        if frame_id is not None:
-            out[frame_id] = name
-    return out
-
-
 def main() -> int:
-    default_cfg = os.path.join(os.path.dirname(__file__), "config.ini")
     parser = argparse.ArgumentParser(description="UART MCU TX simulator (send to PC app)")
-    parser.add_argument("--port", default="COM9", help="COM port (default: COM9)")
+    parser.add_argument("--port", default="/dev/ttyUSB0", help="Serial device (default: /dev/ttyUSB0)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate")
-    parser.add_argument("--period", type=float, default=10.0, help="Seconds between frames")
-    parser.add_argument("--config", default=default_cfg, help="Path to config.ini")
-    parser.add_argument("--mode", choices=("interactive", "pattern"), default="interactive",
-                        help="interactive: type id/value in console, pattern: send built-in test pattern")
+    parser.add_argument("--period", type=float, default=0.7, help="Seconds between frames")
+    parser.add_argument("--config", default="config.ini", help="Path to config.ini")
     parser.add_argument("--send-invalid-every", type=int, default=0,
                         help="Inject invalid CRC frame every N valid frames (0=disabled)")
     args = parser.parse_args()
 
-    pattern = build_target_tx_sequence(args.config)
-    console_targets = build_console_targets(args.config)
+    pattern = build_full_test_sequence(args.config)
     id_decode_map = build_id_decode_map(args.config)
-    if args.mode == "pattern" and not pattern:
-        print(f"Required IDs not found in {args.config} (need LRF_RESET, DAY, LOW_LIGHT, THERMAL, FREQUENCY).")
-        return 1
-    if args.mode == "interactive" and not console_targets:
-        print(f"Required button IDs not found in {args.config} (need DAY, LOW_LIGHT, THERMAL, DROP).")
+    if not pattern:
+        print(f"No test IDs found in {args.config}.")
         return 1
 
     with serial.Serial(args.port, args.baud, timeout=0.1) as ser:
@@ -198,87 +187,33 @@ def main() -> int:
 
         print(f"Opened {args.port} @ {args.baud}")
         print(f"Sending MCU->PC frames from {args.config}.")
+        print("Console shows both TX and RX frames. Press Ctrl+C to stop.")
+        i = 0
         sent_valid = 0
         try:
-            if args.mode == "pattern":
-                print("Pattern: LRF_RESET, DAY, LOW_LIGHT, THERMAL (ON/OFF) + FREQUENCY (1,4,10,20,100,200)")
-                print("Console shows both TX and RX frames. Press Ctrl+C to stop.")
-                i = 0
-                while True:
-                    kind, name, frame_id, value = pattern[i % len(pattern)]
-                    frame = bytearray(build_frame(frame_id, value))
-                    ser.write(frame)
-                    print(
-                        f"TX valid: {kind} {name} id={frame_id} value={value} "
-                        f"frame={[hex(b) for b in frame]}"
-                    )
-                    sent_valid += 1
+            while True:
+                kind, name, frame_id, value = pattern[i % len(pattern)]
+                frame = bytearray(build_frame(frame_id, value))
+                ser.write(frame)
+                print(
+                    f"TX valid: {kind} {name} id={frame_id} value={value} "
+                    f"frame={[hex(b) for b in frame]}"
+                )
+                sent_valid += 1
 
-                    if args.send_invalid_every > 0 and (sent_valid % args.send_invalid_every) == 0:
-                        bad = bytearray(frame)
-                        bad[3] ^= 0x01
-                        ser.write(bad)
-                        print(f"TX invalid CRC test frame: {[hex(b) for b in bad]}")
+                if args.send_invalid_every > 0 and (sent_valid % args.send_invalid_every) == 0:
+                    bad = bytearray(frame)
+                    bad[3] ^= 0x01  # break CRC
+                    ser.write(bad)
+                    print(f"TX invalid CRC test frame: {[hex(b) for b in bad]}")
 
-                    i += 1
-                    time.sleep(args.period)
-            else:
-                print("Interactive mode.")
-                print("Type: <id> <value>")
-                print("Allowed IDs from config:")
-                for frame_id, name in sorted(console_targets.items()):
-                    print(f"  {frame_id} -> {name}")
-                print("Allowed values: 0 or 1")
-                print("Examples: 11 1, 12 0, 13 1, 14 0")
-                print("Type 'q' or 'quit' to stop.")
-
-                while True:
-                    line = input("TX> ").strip()
-                    if not line:
-                        continue
-                    if line.lower() in ("q", "quit", "exit"):
-                        break
-
-                    parts = line.split()
-                    if len(parts) != 2:
-                        print("Invalid input. Use: <id> <value>")
-                        continue
-
-                    try:
-                        frame_id = int(parts[0], 0)
-                        value = int(parts[1], 0)
-                    except ValueError:
-                        print("Invalid numbers. Use integer id and value.")
-                        continue
-
-                    if frame_id not in console_targets:
-                        print(f"Unsupported id={frame_id}. Allowed ids: {sorted(console_targets)}")
-                        continue
-                    if value not in (0, 1):
-                        print("Unsupported value. Use 0 or 1.")
-                        continue
-
-                    name = console_targets[frame_id]
-                    frame = bytearray(build_frame(frame_id, value))
-                    ser.write(frame)
-                    print(
-                        f"TX valid: BUTTON {name} id={frame_id} value={value} "
-                        f"frame={[hex(b) for b in frame]}"
-                    )
-                    sent_valid += 1
-
-                    if args.send_invalid_every > 0 and (sent_valid % args.send_invalid_every) == 0:
-                        bad = bytearray(frame)
-                        bad[3] ^= 0x01
-                        ser.write(bad)
-                        print(f"TX invalid CRC test frame: {[hex(b) for b in bad]}")
+                i += 1
+                time.sleep(args.period)
         except KeyboardInterrupt:
-            pass
-        finally:
             stop_evt.set()
             rx_thread.join(timeout=1.0)
             print("\nStopped.")
-    return 0
+            return 0
 
 
 if __name__ == "__main__":

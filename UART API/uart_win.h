@@ -2,11 +2,10 @@
 #define OWL_UART_WIN_H
 
 #include <stdint.h>
-#include <windows.h>
 
 typedef struct
 {
-    HANDLE handle;
+    int fd;
     uint32_t read_timeout_ms;
 } uart_t;
 

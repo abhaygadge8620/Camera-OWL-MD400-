@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include "config_ini.h"
 
 #include <ctype.h>
@@ -23,40 +21,69 @@ typedef enum
 typedef struct
 {
     const char *name;
+    const char *canonical_name;
     int index;
 } name_index_t;
 
 static const name_index_t k_button_index[BUTTON_COUNT] =
 {
-    {"DRIVES_RESET", 0}, {"OPTICS_RESET", 1}, {"LRF_RESET", 2}, {"CCE_RESET", 3}, {"PARK", 4},
-    {"ABORT", 5}, {"COMBAT", 6}, {"BCU", 7}, {"PREPAR", 8}, {"UNCAG", 9},
-    {"DAY", 10}, {"LOW_LIGHT", 11}, {"THERMAL", 12}, {"DROP", 13}, {"FIRE", 14},
-    {"LRF", 15}
+    {"DRIVES_RESET", "DRIVES_RESET", 0}, {"OPTICS_RESET", "OPTICS_RESET", 1},
+    {"LRF_RESET", "LRF_RESET", 2}, {"CCE_RESET", "CCE_RESET", 3}, {"PARK", "PARK", 4},
+    {"ABORT", "ABORT", 5}, {"COMBAT", "COMBAT", 6}, {"BCU", "BCU", 7},
+    {"PREPAR", "PREPAR", 8}, {"UNCAG", "UNCAG", 9}, {"DAY", "DAY", 10},
+    {"LOW_LIGHT", "LOW_LIGHT", 11}, {"THERMAL", "THERMAL", 12}, {"DROP", "DROP", 13},
+    {"FIRE", "FIRE", 14}, {"LRF", "LRF", 15}, {"GButton1", "GButton1", 16},
+    {"GButton2", "GButton2", 17}, {"GButton3", "GButton3", 18}, {"GButton4", "GButton4", 19},
+    {"GButton5", "GButton5", 20}, {"GButton6", "GButton6", 21}
 };
 
-static const name_index_t k_button_led_index[BUTTON_LED_COUNT] =
+static const name_index_t k_button_led_index[] =
 {
-    {"DRIVES_RESET_LED", 0}, {"OPTICS_RESET_LED", 1}, {"LRF_RESET_LED", 2}, {"CCE_RESET_LED", 3}, {"PARK_LED", 4},
-    {"ABORT_LED", 5}, {"COMBAT_LED", 6}, {"BCU_LED", 7}, {"PREPAR_LED", 8}, {"UNCAG_LED", 9},
-    {"DAY_LED", 10}, {"LOW_LIGHT_LED", 11}, {"THERMAL_LED", 12}, {"DROP_LED", 13}, {"FIRE_LED", 14},
-    {"LRF_LED", 15}, {"SW_LRF_LED", 16}
+    {"DRIVES_RESET_LED", "DRIVES_RESET_LED", 0}, {"OPTICS_RESET_LED", "OPTICS_RESET_LED", 1},
+    {"LRF_RESET_LED", "LRF_RESET_LED", 2}, {"CCE_RESET_LED", "CCE_RESET_LED", 3},
+    {"PARK_LED", "PARK_LED", 4}, {"ABORT_LED", "ABORT_LED", 5}, {"COMBAT_LED", "COMBAT_LED", 6},
+    {"BCU_LED", "BCU_LED", 7}, {"PREPAR_LED", "PREPAR_LED", 8}, {"UNCAG_LED", "UNCAG_LED", 9},
+    {"DAY_LED", "DAY_LED", 10}, {"LOW_LIGHT_LED", "LOW_LIGHT_LED", 11},
+    {"THERMAL_LED", "THERMAL_LED", 12}, {"DROP_LED", "DROP_LED", 13}, {"FIRE_LED", "FIRE_LED", 14},
+    {"LRF_LED", "LRF_LED", 15}, {"SW_LRF_LED", "SW_LRF_LED", 16},
+    {"SW_LRF_Status_LED", "SW_LRF_LED", 16}, {"GBUTTON1_LED", "GBUTTON1_LED", 17},
+    {"GBUTTON2_LED", "GBUTTON2_LED", 18}, {"GBUTTON3_LED", "GBUTTON3_LED", 19},
+    {"GBUTTON4_LED", "GBUTTON4_LED", 20}, {"GBUTTON5_LED", "GBUTTON5_LED", 21},
+    {"GBUTTON6_LED", "GBUTTON6_LED", 22}, {"SW_UnLOCK_Status_LED", "SW_UnLOCK_Status_LED", 23},
+    {"SW_UNLOCK_Status_LED", "SW_UnLOCK_Status_LED", 23},
+    {"SW_STRELETS_CH1_Status_LED", "SW_STRELETS_CH1_Status_LED", 24},
+    {"SW_STRELETS_CH2_Status_LED", "SW_STRELETS_CH2_Status_LED", 25},
+    {"SW_CCE_Status_LED", "SW_CCE_Status_LED", 26},
+    {"SW_Optics_Status_LED", "SW_Optics_Status_LED", 27},
+    {"SW_Drives_Status_LED", "SW_Drives_Status_LED", 28}
 };
 
-static const name_index_t k_switch_index[SWITCH_COUNT] =
+static const name_index_t k_switch_index[] =
 {
-    {"MAIN_POWER_ON", 0}, {"DRIVES_ON", 1}, {"OPTICS_ON", 2}, {"LRF_ON", 3}, {"CCE_ON", 4},
-    {"LOCK", 5}, {"STRELETS_CH1_ON", 6}, {"STRELETS_CH2_ON", 7}, {"SINGLE", 8}, {"CTRL_SRC_WCS", 9},
-    {"HEAT_FILTER_ON", 10}, {"LAUNCH_KEY_EN", 11}, {"TARGET_SPEED_FAST", 12}, {"CHASE_HEAD", 13},
-    {"CHASE_TAIL", 14}, {"TARGET_SPEED_SLOW", 15}, {"CTRL_SRC_CCE", 16}, {"SALVO", 17}
+    {"MAIN_POWER_ON", "MAIN_POWER_ON", 0}, {"DRIVES_ON", "DRIVES_ON", 1},
+    {"OPTICS_ON", "OPTICS_ON", 2}, {"LRF_ON", "LRF_ON", 3}, {"CCE_ON", "CCE_ON", 4},
+    {"LOCK", "LOCK", 5}, {"STRELETS_CH1_ON", "STRELETS_CH1_ON", 6},
+    {"STRELETS_CH2_ON", "STRELETS_CH2_ON", 7}, {"SINGLE", "SINGLE", 8},
+    {"SALVO_SINGLE", "SINGLE", 8}, {"CTRL_SRC_WCS", "CTRL_SRC_WCS", 9},
+    {"HEAT_FILTER_ON", "HEAT_FILTER_ON", 10}, {"LAUNCH_KEY_EN", "LAUNCH_KEY_EN", 11},
+    {"TARGET_SPEED_FAST", "TARGET_SPEED_FAST", 12}, {"CHASE_HEAD", "CHASE_HEAD", 13},
+    {"CHASE_TAIL", "CHASE_TAIL", 14}, {"TARGET_SPEED_SLOW", "TARGET_SPEED_SLOW", 15},
+    {"CTRL_SRC_CCE", "CTRL_SRC_CCE", 16}, {"SALVO", "SALVO", 17}, {"UNLOCK", "UNLOCK", 18}
 };
 
 static const name_index_t k_led_index[LED_COUNT] =
 {
-    {"EXT_GYRO", 0}, {"EXT_WIND", 1}, {"EXT_LOG", 2}, {"EXT_BLOCK", 3}, {"TRN_LOCK", 4},
-    {"TRN_UNLOCK", 5}, {"TRN_MOVE", 6}, {"ELV_LOCK", 7}, {"ELV_UNLOCK", 8}, {"ELV_MOVE", 9},
-    {"MSL_ACTIVE", 10}, {"MSL_READY", 11}, {"MSL_LOCK", 12}, {"MSL_LAUNCH", 13},
-    {"PWR_AVAILABLE", 14}, {"PWR_STATUS", 15}, {"LAUNCH_DISABLED", 16}, {"LAUNCH_ENABLED", 17},
-    {"PORT1_MSL_2", 18}, {"PORT1_MSL_4", 19}, {"STBD1_MSL_1", 20}, {"STBD1_MSL_3", 21}
+    {"EXT_GYRO", "EXT_GYRO", 0}, {"EXT_WIND", "EXT_WIND", 1}, {"EXT_LOG", "EXT_LOG", 2},
+    {"EXT_BLOCK", "EXT_BLOCK", 3}, {"TRN_LOCK", "TRN_LOCK", 4},
+    {"TRN_UNLOCK", "TRN_UNLOCK", 5}, {"TRN_MOVE", "TRN_MOVE", 6},
+    {"ELV_LOCK", "ELV_LOCK", 7}, {"ELV_UNLOCK", "ELV_UNLOCK", 8},
+    {"ELV_MOVE", "ELV_MOVE", 9}, {"MSL_ACTIVE", "MSL_ACTIVE", 10},
+    {"MSL_READY", "MSL_READY", 11}, {"MSL_LOCK", "MSL_LOCK", 12},
+    {"MSL_LAUNCH", "MSL_LAUNCH", 13}, {"PWR_AVAILABLE", "PWR_AVAILABLE", 14},
+    {"PWR_STATUS", "PWR_STATUS", 15}, {"LAUNCH_DISABLED", "LAUNCH_DISABLED", 16},
+    {"LAUNCH_ENABLED", "LAUNCH_ENABLED", 17}, {"PORT1_MSL_2", "PORT1_MSL_2", 18},
+    {"PORT1_MSL_4", "PORT1_MSL_4", 19}, {"STBD1_MSL_1", "STBD1_MSL_1", 20},
+    {"STBD1_MSL_3", "STBD1_MSL_3", 21}
 };
 
 static const char *g_button_name_by_id[256];
@@ -132,17 +159,17 @@ static int parse_s8_as_u8(const char *s, uint8_t *out)
     return 0;
 }
 
-static int find_index(const char *name, const name_index_t *table, int n)
+static const name_index_t *find_name_entry(const char *name, const name_index_t *table, int n)
 {
     int i;
     for (i = 0; i < n; i++)
     {
         if (strcmp(name, table[i].name) == 0)
         {
-            return table[i].index;
+            return &table[i];
         }
     }
-    return -1;
+    return NULL;
 }
 
 static void set_id_entry(id_entry_t *entry, const char *name, uint8_t id);
@@ -164,9 +191,9 @@ static int set_next_free_entry(id_entry_t *entries, int count, const char *name,
 static void config_set_defaults(Config *cfg)
 {
     memset(cfg, 0, sizeof(*cfg));
-    strncpy(cfg->uart_device, "COM6", sizeof(cfg->uart_device) - 1U);
+    strncpy(cfg->uart_device, "/dev/ttyUSB0", sizeof(cfg->uart_device) - 1U);
     cfg->uart_baud = 115200U;
-    cfg->uart_read_timeout_ms = 0U;
+    cfg->uart_read_timeout_ms = 20U;
 }
 
 static void reset_name_maps(void)
@@ -261,7 +288,7 @@ int config_load(const char *path, Config *cfg)
         char key[128];
         char val[128];
         uint8_t id = 0U;
-        int idx = -1;
+        const name_index_t *entry = NULL;
 
         line[strcspn(line, "\r\n")] = '\0';
         trim_inplace(line);
@@ -337,23 +364,23 @@ int config_load(const char *path, Config *cfg)
 
         if (section == SEC_INPUT_BUTTON_IDS)
         {
-            idx = find_index(key, k_button_index, BUTTON_COUNT);
-            if (idx >= 0) set_id_entry(&cfg->button_ids[idx], key, id);
+            entry = find_name_entry(key, k_button_index, BUTTON_COUNT);
+            if (entry != NULL) set_id_entry(&cfg->button_ids[entry->index], entry->canonical_name, id);
         }
         else if (section == SEC_BUTTON_LED_IDS)
         {
-            idx = find_index(key, k_button_led_index, BUTTON_LED_COUNT);
-            if (idx >= 0) set_id_entry(&cfg->button_led_ids[idx], key, id);
+            entry = find_name_entry(key, k_button_led_index, (int)(sizeof(k_button_led_index) / sizeof(k_button_led_index[0])));
+            if (entry != NULL) set_id_entry(&cfg->button_led_ids[entry->index], entry->canonical_name, id);
         }
         else if (section == SEC_INPUT_SWITCH_IDS)
         {
-            idx = find_index(key, k_switch_index, SWITCH_COUNT);
-            if (idx >= 0) set_id_entry(&cfg->switch_ids[idx], key, id);
+            entry = find_name_entry(key, k_switch_index, (int)(sizeof(k_switch_index) / sizeof(k_switch_index[0])));
+            if (entry != NULL) set_id_entry(&cfg->switch_ids[entry->index], entry->canonical_name, id);
         }
         else if (section == SEC_LED_IDS)
         {
-            idx = find_index(key, k_led_index, LED_COUNT);
-            if (idx >= 0) set_id_entry(&cfg->led_ids[idx], key, id);
+            entry = find_name_entry(key, k_led_index, LED_COUNT);
+            if (entry != NULL) set_id_entry(&cfg->led_ids[entry->index], entry->canonical_name, id);
         }
         else if (section == SEC_KNOB_IDS)
         {
