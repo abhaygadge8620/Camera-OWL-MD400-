@@ -28,4 +28,7 @@
 int ini_get_value(const char *filename, const char *section, const char *key,
                   char *value_out, size_t max_len);
 
+int ini_set_value(const char *filename, const char *section, const char *key,
+                  const char *value);
+
 #endif // INI_PARSER_H

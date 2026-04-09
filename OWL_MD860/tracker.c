@@ -4,6 +4,7 @@
  */
 
 #include "tracker.h"
+#include "camera_iface.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,6 +24,7 @@ static uint32_t s_last_refresh = 0U;
 
 static tracker_state_t s_state;
 static tracker_state_t s_last_published;
+static owl_cam_t *g_tracker_cam = NULL;
 
 static int s_udp_mcast_enabled = 0;
 static uint8_t s_udp_camera_id = 1u;
@@ -38,6 +40,12 @@ static int parse_u16_dec(const char *p, uint16_t *out);
 static void tsm_rx_handler(const char *topic, const char *payload, size_t len);
 static void on_set_word(const char *word, const char *payload);
 
+static int tracker_cam_is_valid(uint8_t cam);
+static int tracker_coord_mode_is_valid(uint8_t mode);
+static int tracker_detect_mode_is_valid(uint8_t mode);
+static int tracker_auto_mode_is_valid(uint8_t mode);
+static int tracker_disable_mask_is_valid(uint8_t disable_mask);
+
 static size_t tsm_bounded_len(const char *s, size_t maxlen)
 {
     size_t i = 0U;
@@ -48,6 +56,460 @@ static size_t tsm_bounded_len(const char *s, size_t maxlen)
         i++;
     }
     return i;
+}
+
+void tracker_bind_cam(void *cam_handle)
+{
+    g_tracker_cam = (owl_cam_t *)cam_handle;
+}
+
+static int tracker_cam_is_valid(uint8_t cam)
+{
+    return (cam == OWL_TRACK_CAM_THERMAL) ||
+           (cam == OWL_TRACK_CAM_DAY1) ||
+           (cam == OWL_TRACK_CAM_DAY2);
+}
+
+static int tracker_coord_mode_is_valid(uint8_t mode)
+{
+    return (mode == OWL_TRK_COORD_START) || (mode == OWL_TRK_COORD_STOP);
+}
+
+static int tracker_detect_mode_is_valid(uint8_t mode)
+{
+    return (mode >= OWL_TRK_DETECT_DRONE) && (mode <= OWL_TRK_DETECT_FIGHTERJET);
+}
+
+static int tracker_auto_mode_is_valid(uint8_t mode)
+{
+    return (mode == OWL_TRK_AUTO_NONE) ||
+           (mode == OWL_TRK_AUTO_DRONE) ||
+           (mode == OWL_TRK_AUTO_BIRD) ||
+           (mode == OWL_TRK_AUTO_FIGHTERJET) ||
+           (mode == OWL_TRK_AUTO_ALL);
+}
+
+static int tracker_disable_mask_is_valid(uint8_t disable_mask)
+{
+    const uint8_t valid_bits = (uint8_t)(OWL_TRK_DISABLE_THERMAL |
+                                         OWL_TRK_DISABLE_DAY1 |
+                                         OWL_TRK_DISABLE_DAY2);
+
+    return ((disable_mask & valid_bits) != 0u) &&
+           ((disable_mask & (uint8_t)(~valid_bits)) == 0u);
+}
+
+int camera_iface_read_tracker(tracker_state_t *out_state)
+{
+    int rc;
+
+    if ((out_state == NULL) || (g_tracker_cam == NULL)) {
+        return OWL_ERR_ARG;
+    }
+
+    rc = owl_tracker_read_all(out_state);
+    if (rc == OWL_OK) {
+        return OWL_OK;
+    }
+
+    if ((rc == OWL_ERR_IO) || (rc == OWL_ERR_PROTO)) {
+        rc = owl_tracker_read_all(out_state);
+        if (rc == OWL_OK) {
+            return OWL_OK;
+        }
+        if ((rc == OWL_ERR_IO) || (rc == OWL_ERR_PROTO)) {
+            rc = owl_tracker_read_all(out_state);
+        }
+    }
+
+    return rc;
+}
+
+int camera_iface_cmd_w6(uint8_t mode_value)
+{
+    tracker_state_t st;
+    const uint8_t new_mode = (mode_value != 0u) ? OWL_TRK_MODE_ON : OWL_TRK_MODE_OFF;
+    int rc;
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+
+    rc = owl_tracker_read_all(&st);
+    if (rc != OWL_OK) {
+        return rc;
+    }
+
+    return owl_tracker_set_coord(st.coord_cam_id, st.coord_x, st.coord_y, new_mode);
+}
+
+int camera_iface_cmd_w7(uint8_t disable_mask)
+{
+    tracker_state_t st;
+    uint8_t cam_bit = 0u;
+    int rc;
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if (tracker_disable_mask_is_valid(disable_mask) == 0) {
+        return OWL_ERR_ARG;
+    }
+
+    rc = owl_tracker_read_all(&st);
+    if (rc != OWL_OK) {
+        return rc;
+    }
+
+    if (st.coord_cam_id == OWL_TRACK_CAM_THERMAL) {
+        cam_bit = OWL_TRK_DISABLE_THERMAL;
+    } else if (st.coord_cam_id == OWL_TRACK_CAM_DAY1) {
+        cam_bit = OWL_TRK_DISABLE_DAY1;
+    } else if (st.coord_cam_id == OWL_TRACK_CAM_DAY2) {
+        cam_bit = OWL_TRK_DISABLE_DAY2;
+    } else {
+        return OWL_ERR_PROTO;
+    }
+
+    if ((disable_mask & cam_bit) == 0u) {
+        return OWL_OK;
+    }
+
+    return owl_tracker_set_coord(st.coord_cam_id, st.coord_x, st.coord_y, OWL_TRK_MODE_OFF);
+}
+
+int owl_tracker_mode_on(uint8_t cam, uint16_t x, uint16_t y)
+{
+    return owl_tracker_set_coord(cam, x, y, OWL_TRK_MODE_ON);
+}
+
+int owl_tracker_mode_off(uint8_t cam, uint16_t x, uint16_t y)
+{
+    return owl_tracker_set_coord(cam, x, y, OWL_TRK_MODE_OFF);
+}
+
+int owl_tracker_set_coord(uint8_t cam, uint16_t x, uint16_t y, uint8_t mode)
+{
+    uint8_t b[6];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if ((tracker_cam_is_valid(cam) == 0) || (tracker_coord_mode_is_valid(mode) == 0)) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = (uint8_t)(x >> 8);
+    b[2] = (uint8_t)(x & 0xFFu);
+    b[3] = (uint8_t)(y >> 8);
+    b[4] = (uint8_t)(y & 0xFFu);
+    b[5] = mode;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_COORD, b, 6u);
+}
+
+int owl_tracker_set_box(uint8_t cam, uint8_t w, uint8_t h)
+{
+    uint8_t b[3];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if ((tracker_cam_is_valid(cam) == 0) || (w == 0u) || (h == 0u)) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = w;
+    b[2] = h;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_BOX, b, 3u);
+}
+
+int owl_tracker_set_mode(uint8_t cam, uint8_t mode)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if ((tracker_cam_is_valid(cam) == 0) || (tracker_detect_mode_is_valid(mode) == 0)) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = mode;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_MODE, b, 2u);
+}
+
+int owl_tracker_set_lock(uint8_t cam, uint8_t mode)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if (tracker_cam_is_valid(cam) == 0) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = mode;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_LOCK, b, 2u);
+}
+
+int owl_tracker_set_stab(uint8_t cam, uint8_t mode)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if (tracker_cam_is_valid(cam) == 0) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = mode;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_STAB, b, 2u);
+}
+
+int owl_tracker_set_szone(uint8_t cam, uint8_t zone)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if (tracker_cam_is_valid(cam) == 0) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = zone;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_SZONE, b, 2u);
+}
+
+int owl_tracker_set_auto(uint8_t cam, uint8_t mode, uint8_t sens)
+{
+    uint8_t b[3];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if ((tracker_cam_is_valid(cam) == 0) || (tracker_auto_mode_is_valid(mode) == 0)) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = mode;
+    b[2] = sens;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_AUTO, b, 3u);
+}
+
+int owl_tracker_set_roi(uint8_t cam, uint8_t mode)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if (tracker_cam_is_valid(cam) == 0) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = mode;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_ROI, b, 2u);
+}
+
+int owl_tracker_set_bitrate_centi(uint16_t centi_mbps)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = (uint8_t)(centi_mbps >> 8);
+    b[1] = (uint8_t)(centi_mbps & 0xFFu);
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_BITRATE, b, 2u);
+}
+
+int owl_tracker_set_maxfail(uint8_t cam, uint8_t code)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if (tracker_cam_is_valid(cam) == 0) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = code;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_MAXFAIL, b, 2u);
+}
+
+int owl_tracker_set_type(uint8_t cam, uint8_t type_code)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if (tracker_cam_is_valid(cam) == 0) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = type_code;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_TYPE, b, 2u);
+}
+
+int owl_tracker_set_search_area(uint8_t cam, uint8_t percent)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if ((tracker_cam_is_valid(cam) == 0) || (percent > 100u)) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = percent;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_SEARCH_AREA, b, 2u);
+}
+
+int owl_tracker_set_confidence(uint8_t cam, uint8_t tenths)
+{
+    uint8_t b[2];
+
+    if (g_tracker_cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+    if ((tracker_cam_is_valid(cam) == 0) || (tenths > 10u)) {
+        return OWL_ERR_ARG;
+    }
+
+    b[0] = cam;
+    b[1] = tenths;
+    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_CONFIDENCE, b, 2u);
+}
+
+int owl_tracker_read_all(tracker_state_t *st)
+{
+    if ((st == NULL) || (g_tracker_cam == NULL)) {
+        return OWL_ERR_ARG;
+    }
+
+#define RD(_addr, _buf, _len) \
+    do { \
+        size_t _io = (size_t)(_len); \
+        int _rc = owl_cam_read(g_tracker_cam, OWL_IFACE_TRACKER, (_addr), (_buf), &_io); \
+        if ((_rc != OWL_OK) || (_io != (size_t)(_len))) { \
+            return (_rc != OWL_OK) ? _rc : OWL_ERR_IO; \
+        } \
+    } while (0)
+
+    {
+        uint8_t b[6];
+        RD(OWL_ADDR_TRK_SET_COORD, b, 6);
+        st->coord_cam_id = b[0];
+        st->coord_x = ((uint16_t)b[1] << 8) | b[2];
+        st->coord_y = ((uint16_t)b[3] << 8) | b[4];
+        st->coord_mode = b[5];
+    }
+
+    {
+        uint8_t b[3];
+        RD(OWL_ADDR_TRK_SET_BOX, b, 3);
+        st->box_cam_id = b[0];
+        st->box_w = b[1];
+        st->box_h = b[2];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_MODE, b, 2);
+        st->tmode_cam_id = b[0];
+        st->tmode = b[1];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_LOCK, b, 2);
+        st->lock_cam_id = b[0];
+        st->lock_mode = b[1];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_STAB, b, 2);
+        st->stab_cam_id = b[0];
+        st->stab_mode = b[1];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_SZONE, b, 2);
+        st->szone_cam_id = b[0];
+        st->szone_zone = b[1];
+    }
+
+    {
+        uint8_t b[3];
+        RD(OWL_ADDR_TRK_SET_AUTO, b, 3);
+        st->ad_cam_id = b[0];
+        st->ad_mode = b[1];
+        st->ad_sens = b[2];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_ROI, b, 2);
+        st->roi_cam_id = b[0];
+        st->roi_mode = b[1];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_BITRATE, b, 2);
+        st->enc_br_centi = ((uint16_t)b[0] << 8) | b[1];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_MAXFAIL, b, 2);
+        st->mfail_cam_id = b[0];
+        st->mfail_code = b[1];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_TYPE, b, 2);
+        st->type_cam_id = b[0];
+        st->type_code = b[1];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_SEARCH_AREA, b, 2);
+        st->sarea_cam_id = b[0];
+        st->sarea_percent = b[1];
+    }
+
+    {
+        uint8_t b[2];
+        RD(OWL_ADDR_TRK_SET_CONFIDENCE, b, 2);
+        st->conf_cam_id = b[0];
+        st->conf_tenths = b[1];
+    }
+
+#undef RD
+    return OWL_OK;
 }
 
 static void make_topic(char *out, size_t out_sz, const char *leaf1, const char *leaf2)

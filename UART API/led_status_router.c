@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "UART API/uart_protocol.h"
+#include "uart_protocol.h"
 
 static int resolve_button_led_id(const led_status_router_t *ctx, const char *button_name, uint8_t *led_id_out)
 {

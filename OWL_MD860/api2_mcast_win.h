@@ -15,7 +15,8 @@ typedef enum
     API2_CH_CAMERA = 0,
     API2_CH_JOYSTICK = 1,
     API2_CH_BUTTON_LED = 2,
-    API2_CH_COUNT = 3
+    API2_CH_TRACKER_TELEM = 3,
+    API2_CH_COUNT = 4
 } api2_channel_t;
 
 typedef struct
@@ -56,6 +57,57 @@ typedef struct
 
 typedef struct
 {
+    uint8_t  version;
+    uint8_t  pt_reserved[10];
+    uint16_t lrf_range;
+    uint8_t  lrf_reserved[3];
+    uint16_t thermal_ret_x;
+    uint16_t thermal_ret_y;
+    uint8_t  thermal_fov_code;
+    float    thermal_fov_deg;
+    uint8_t  thermal_nuc_status;
+    uint8_t  thermal_reserved[10];
+    uint16_t day_ret_x;
+    uint16_t day_ret_y;
+    uint8_t  day_fov_code;
+    float    day_fov_deg;
+    uint8_t  day_reserved[11];
+    uint16_t day2_ret_x;
+    uint16_t day2_ret_y;
+    uint8_t  day2_fov_code;
+    float    day2_fov_deg;
+    uint8_t  day2_reserved[11];
+    uint8_t  tracker_enable_mode;
+    uint16_t tracker_ret_x;
+    uint16_t tracker_ret_y;
+    uint16_t tracker_bb_w;
+    uint16_t tracker_bb_h;
+    uint16_t tracker_pan_err;
+    uint16_t tracker_tilt_err;
+    uint8_t  track_cam_id;
+    uint8_t  track_mode;
+    uint8_t  track_type;
+    uint8_t  detection_mode;
+    uint8_t  tracker_reserved[3];
+    uint8_t  factory_reserved[20];
+    uint16_t sys_temp;
+    double   lat;
+    uint8_t  ns_dir;
+    double   lon;
+    uint8_t  ew_dir;
+    float    alt_m;
+    uint8_t  sat;
+    uint8_t  gps_qos;
+    uint8_t  gps_reserved[21];
+    uint8_t  pwr_day_on;
+    uint8_t  pwr_thermal_on;
+    uint8_t  pwr_plcb_on;
+    uint8_t  pwr_lrf_on;
+    uint8_t  pwr_overall;
+} api2_tracker_telem_t;
+
+typedef struct
+{
     char iface_ip[32];
     uint8_t ttl;
     uint8_t loopback;
@@ -63,6 +115,7 @@ typedef struct
     api2_channel_cfg_t camera;
     api2_channel_cfg_t joystick;
     api2_channel_cfg_t button_led;
+    api2_channel_cfg_t tracker_telem;
 
     uint8_t camera_id;
 } api2_cfg_t;
@@ -106,6 +159,16 @@ int api2_send_cam1(
         const api2_cam1_status_t* st);
 
 /*
+ * Sends a generic key/value telemetry JSON message on the camera multicast
+ * channel. This mirrors the MQTT telemetry fan-out used by the Linux port.
+ */
+int api2_send_tlm1(
+        uint32_t seq,
+        uint8_t camera_id,
+        const char* topic,
+        const char* value);
+
+/*
  * Polls camera multicast channel and parses JSON type "camera_telem".
  * Returns:
  *   1 : parsed one valid camera_telem packet
@@ -116,6 +179,11 @@ int api2_poll_cam1(
         uint32_t* seq_out,
         uint8_t* camera_id_out,
         api2_cam1_status_t* st_out);
+
+int api2_send_tracker_telem(
+        uint32_t seq,
+        uint8_t camera_id,
+        const api2_tracker_telem_t* st);
 
 /* -------------------------------------------------------------------------- */
 /* Joystick JSON                                                               */
@@ -147,6 +215,25 @@ int api2_send_button_led_json(
         uint32_t seq,
         const char* name,
         uint8_t value,
+        const char* direction,
+        const char* source);
+
+int api2_send_button_led_state_json(
+        uint32_t seq,
+        uint8_t id,
+        const char* name,
+        uint8_t value,
+        const char* direction,
+        const char* source);
+
+int api2_send_button_led_snapshot_json(
+        uint32_t seq,
+        const void *states,
+        size_t state_count,
+        size_t state_stride,
+        size_t id_offset,
+        size_t name_offset,
+        size_t value_offset,
         const char* direction,
         const char* source);
 

@@ -87,15 +87,62 @@ typedef struct
     uint8_t  conf_tenths;    /* 0..10 means 0.0..1.0 */
 } tracker_state_t;
 
+/* ---------- Tracker register map / constants ---------- */
+#define OWL_ADDR_TRK_SET_COORD          (0x0001u)
+#define OWL_ADDR_TRK_SET_BOX            (0x0002u)
+#define OWL_ADDR_TRK_SET_MODE           (0x0003u)
+#define OWL_ADDR_TRK_SET_LOCK           (0x0004u)
+#define OWL_ADDR_TRK_SET_STAB           (0x0005u)
+#define OWL_ADDR_TRK_SET_SZONE          (0x0006u)
+#define OWL_ADDR_TRK_SET_AUTO           (0x0008u)
+#define OWL_ADDR_TRK_SET_ROI            (0x0009u)
+#define OWL_ADDR_TRK_SET_BITRATE        (0x000Cu)
+#define OWL_ADDR_TRK_SET_MAXFAIL        (0x000Du)
+#define OWL_ADDR_TRK_CAM_SWITCH         (0x000Eu)
+#define OWL_ADDR_TRK_SET_TYPE           (0x000Fu)
+#define OWL_ADDR_TRK_SET_SEARCH_AREA    (0x0010u)
+#define OWL_ADDR_TRK_SET_CONFIDENCE     (0x0011u)
+
+#define OWL_TRACK_CAM_THERMAL           (0x01u)
+#define OWL_TRACK_CAM_DAY1              (0x02u)
+#define OWL_TRACK_CAM_DAY2              (0x03u)
+
+#define OWL_TRK_COORD_START             (0x01u)
+#define OWL_TRK_COORD_STOP              (0x02u)
+#define OWL_TRK_MODE_ON                 OWL_TRK_COORD_START
+#define OWL_TRK_MODE_OFF                OWL_TRK_COORD_STOP
+
+#define OWL_TRK_DETECT_DRONE            (0x03u)
+#define OWL_TRK_DETECT_AIRCRAFT         (0x04u)
+#define OWL_TRK_DETECT_NONE             (0x05u)
+#define OWL_TRK_DETECT_ALL              (0x06u)
+#define OWL_TRK_DETECT_BIRD             (0x07u)
+#define OWL_TRK_DETECT_FIGHTERJET       (0x08u)
+
+#define OWL_TRK_AUTO_NONE               (0x01u)
+#define OWL_TRK_AUTO_DRONE              (0x05u)
+#define OWL_TRK_AUTO_BIRD               (0x06u)
+#define OWL_TRK_AUTO_FIGHTERJET         (0x07u)
+#define OWL_TRK_AUTO_ALL                (0x08u)
+
+#define OWL_TRK_DISABLE_THERMAL         (0x01u)
+#define OWL_TRK_DISABLE_DAY1            (0x02u)
+#define OWL_TRK_DISABLE_DAY2            (0x04u)
+
+/* camera handle binder provided by camera_iface.c */
+void tracker_bind_cam(void *cam_handle);
+
 /* ---------- Adapter functions to your camera_iface (provide in your project) ----------
  * Return 0 on success, non-zero on failure.
- * NOTE: These are declared here; define them in camera_iface.c (or adapt names).
+ * NOTE: Implemented in tracker.c, using camera transport from camera_iface.c.
  */
 int camera_iface_read_tracker(tracker_state_t *out_state);
 int camera_iface_cmd_w6(uint8_t mode_value);
 int camera_iface_cmd_w7(uint8_t disable_mask);
 
-/* Camera tracker register API (implemented in camera_iface.c) */
+/* Camera tracker register API (implemented in tracker.c) */
+int owl_tracker_mode_on(uint8_t cam, uint16_t x, uint16_t y);
+int owl_tracker_mode_off(uint8_t cam, uint16_t x, uint16_t y);
 int owl_tracker_read_all(tracker_state_t *st);
 int owl_tracker_set_coord(uint8_t cam, uint16_t x, uint16_t y, uint8_t mode);
 int owl_tracker_set_box(uint8_t cam, uint8_t w, uint8_t h);

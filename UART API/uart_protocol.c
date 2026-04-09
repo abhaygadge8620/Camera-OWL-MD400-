@@ -130,7 +130,13 @@ int uart_read_and_parse(uart_t *uart, uint8_t *id, uint8_t *value)
     }
 
     rc = uart_read_byte(uart, &b);
-    printf("uart_read_byte rc=%d byte=0x%02X\n", rc, b);
+    if (rc > 0) {
+        printf("uart_read_byte rc=%d byte=0x%02X\n", rc, b);
+    } else if (rc == 0) {
+        printf("uart_read_byte rc=0 timeout/no-data\n");
+    } else {
+        printf("uart_read_byte rc=%d read-error\n", rc);
+    }
     if (rc <= 0)
     {
         return rc;

@@ -43,6 +43,7 @@ typedef enum
 #define OWL_ADDR_DAY_POWER              (0x0019u)
 #define OWL_ADDR_THERMAL_POWER          (0x001Au)
 #define OWL_ADDR_LRF_POWER              (0x001Cu)
+#define OWL_ADDR_OSD                    (0x002Eu)
 #define OWL_ADDR_PIP                    (0x002Fu)
 #define OWL_ADDR_PIP_LOCATION           (0x0030u)
 
@@ -58,22 +59,6 @@ typedef enum
 #define OWL_ADDR_FOCUS_CTRL             (0x0101u)
 #define OWL_ADDR_ZOOM_STOP              (0x0102u)
 
-/* Tracker addresses */
-#define OWL_ADDR_TRK_SET_COORD          (0x0001u)
-#define OWL_ADDR_TRK_SET_BOX            (0x0002u)
-#define OWL_ADDR_TRK_SET_MODE           (0x0003u)
-#define OWL_ADDR_TRK_SET_LOCK           (0x0004u)
-#define OWL_ADDR_TRK_SET_STAB           (0x0005u)
-#define OWL_ADDR_TRK_SET_SZONE          (0x0006u)
-#define OWL_ADDR_TRK_SET_AUTO           (0x0008u)
-#define OWL_ADDR_TRK_SET_ROI            (0x0009u)
-#define OWL_ADDR_TRK_SET_BITRATE        (0x000Cu)
-#define OWL_ADDR_TRK_SET_MAXFAIL        (0x000Du)
-#define OWL_ADDR_TRK_CAM_SWITCH         (0x000Eu)
-#define OWL_ADDR_TRK_SET_TYPE           (0x000Fu)
-#define OWL_ADDR_TRK_SET_SEARCH_AREA    (0x0010u)
-#define OWL_ADDR_TRK_SET_CONFIDENCE     (0x0011u)
-
 /* Restart values */
 #define OWL_RESTART_PAYLOAD             (0x01u)
 #define OWL_RESTART_SERVICE             (0x02u)
@@ -88,6 +73,10 @@ typedef enum
 /* PIP values */
 #define OWL_PIP_ON                      (0x01u)
 #define OWL_PIP_OFF                     (0x02u)
+
+/* OSD values */
+#define OWL_OSD_ON                      (0x01u)
+#define OWL_OSD_OFF                     (0x02u)
 
 /* PIP location values */
 #define OWL_PIP_LOC_TOP_LEFT            (0x01u)
@@ -123,37 +112,6 @@ typedef enum
 #define OWL_LRF_FREQ_20HZ               (0x04u)
 #define OWL_LRF_FREQ_100HZ              (0x05u)
 #define OWL_LRF_FREQ_200HZ              (0x06u)
-
-/* Tracker camera IDs */
-#define OWL_TRACK_CAM_THERMAL           (0x01u)
-#define OWL_TRACK_CAM_DAY1              (0x02u) /* Low light */
-#define OWL_TRACK_CAM_DAY2              (0x03u) /* Day normal */
-
-/* Tracker coordinate mode (ICD page 28, addr 0x0001) */
-#define OWL_TRK_COORD_START             (0x01u)
-#define OWL_TRK_COORD_STOP              (0x02u)
-#define OWL_TRK_MODE_ON                 OWL_TRK_COORD_START
-#define OWL_TRK_MODE_OFF                OWL_TRK_COORD_STOP
-
-/* Tracker detection mode (ICD page 28, addr 0x0003) */
-#define OWL_TRK_DETECT_DRONE            (0x03u)
-#define OWL_TRK_DETECT_AIRCRAFT         (0x04u)
-#define OWL_TRK_DETECT_NONE             (0x05u)
-#define OWL_TRK_DETECT_ALL              (0x06u)
-#define OWL_TRK_DETECT_BIRD             (0x07u)
-#define OWL_TRK_DETECT_FIGHTERJET       (0x08u)
-
-/* Tracker auto-tracking mode (ICD page 28, addr 0x0008) */
-#define OWL_TRK_AUTO_NONE               (0x01u)
-#define OWL_TRK_AUTO_DRONE              (0x05u)
-#define OWL_TRK_AUTO_BIRD               (0x06u)
-#define OWL_TRK_AUTO_FIGHTERJET         (0x07u)
-#define OWL_TRK_AUTO_ALL                (0x08u)
-
-/* camera_iface_cmd_w7 camera-disable mask */
-#define OWL_TRK_DISABLE_THERMAL         (0x01u)
-#define OWL_TRK_DISABLE_DAY1            (0x02u)
-#define OWL_TRK_DISABLE_DAY2            (0x04u)
 
 /* Status byte values */
 typedef enum
@@ -204,19 +162,29 @@ typedef struct
 typedef struct
 {
     uint8_t  version;
+    uint8_t  pt_reserved[10];
 
     uint16_t lrf_range;
+    uint8_t  lrf_reserved[3];
 
     uint16_t thermal_ret_x;
     uint16_t thermal_ret_y;
     uint8_t  thermal_fov_code;
     float    thermal_fov_deg;
     uint8_t  thermal_nuc_status;
+    uint8_t  thermal_reserved[10];
 
     uint16_t day_ret_x;
     uint16_t day_ret_y;
     uint8_t  day_fov_code;
     float    day_fov_deg;
+    uint8_t  day_reserved[11];
+
+    uint16_t day2_ret_x;
+    uint16_t day2_ret_y;
+    uint8_t  day2_fov_code;
+    float    day2_fov_deg;
+    uint8_t  day2_reserved[11];
 
     uint8_t  tracker_mode;
     uint16_t tracker_ret_x;
@@ -225,6 +193,13 @@ typedef struct
     uint16_t tracker_bb_h;
     uint16_t tracker_pan_err;
     uint16_t tracker_tilt_err;
+    uint8_t  tracker_cam_id;
+    uint8_t  tracker_track_mode;
+    uint8_t  tracker_track_type;
+    uint8_t  tracker_detection_mode;
+    uint8_t  tracker_reserved[3];
+
+    uint8_t  factory_reserved[20];
 
     uint16_t sys_temp;
 
@@ -235,6 +210,7 @@ typedef struct
     float    alt;
     uint8_t  sat;
     uint8_t  gpsQOS;
+    uint8_t  gps_reserved[21];
 
     uint8_t  pwr_day_on;
     uint8_t  pwr_thermal_on;
@@ -278,6 +254,7 @@ int  owl_cam_write(owl_cam_t *cam, owl_iface_t iface, uint16_t addr,
 int  owl_cam_liveliness(owl_cam_t *cam, bool *alive);
 int  owl_cam_set_telemetry(owl_cam_t *cam, bool enable);
 int  owl_cam_restart(owl_cam_t *cam, uint8_t mode);
+int  owl_cam_set_osd(owl_cam_t *cam, bool enable);
 int  owl_cam_set_pip(owl_cam_t *cam, bool enable);
 int  owl_cam_get_pip(owl_cam_t *cam, bool *enabled);
 int  owl_cam_set_pip_location(owl_cam_t *cam, uint8_t location);

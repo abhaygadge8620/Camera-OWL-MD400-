@@ -1,11 +1,16 @@
 #include "api2_mcast_win.h"
 
-/*
- * If your system installs cJSON as <cjson/cJSON.h>, change this include line
- * to:
- *   #include <cjson/cJSON.h>
- */
+#if defined(__has_include)
+#if __has_include("cJSON.h")
 #include "cJSON.h"
+#elif __has_include(<cjson/cJSON.h>)
+#include <cjson/cJSON.h>
+#else
+#error "cJSON headers not found. Install libcjson-dev or provide cJSON.h."
+#endif
+#else
+#include "cJSON.h"
+#endif
 
 #include <stddef.h>
 #include <stdint.h>
@@ -91,6 +96,7 @@ static const api2_channel_cfg_t* api2_get_cfg_ch(
         case API2_CH_CAMERA:     return &cfg->camera;
         case API2_CH_JOYSTICK:   return &cfg->joystick;
         case API2_CH_BUTTON_LED: return &cfg->button_led;
+        case API2_CH_TRACKER_TELEM: return &cfg->tracker_telem;
         default:                 return NULL;
     }
 }
@@ -101,6 +107,7 @@ static const char* api2_channel_name(api2_channel_t ch)
         case API2_CH_CAMERA:     return "camera";
         case API2_CH_JOYSTICK:   return "joystick";
         case API2_CH_BUTTON_LED: return "button_led";
+        case API2_CH_TRACKER_TELEM: return "tracker_telemetry";
         default:                 return "unknown";
     }
 }
@@ -347,6 +354,32 @@ static int api2_json_get_f32(
     return 0;
 }
 
+static cJSON *api2_json_add_u8_array(const uint8_t *data, size_t len)
+{
+    cJSON *arr = NULL;
+    size_t i;
+
+    if ((data == NULL) && (len > 0u)) {
+        return NULL;
+    }
+
+    arr = cJSON_CreateArray();
+    if (arr == NULL) {
+        return NULL;
+    }
+
+    for (i = 0u; i < len; ++i) {
+        cJSON *item = cJSON_CreateNumber((double)data[i]);
+        if (item == NULL) {
+            cJSON_Delete(arr);
+            return NULL;
+        }
+        cJSON_AddItemToArray(arr, item);
+    }
+
+    return arr;
+}
+
 static int api2_parse_cam1_json(
         const char* json_str,
         uint32_t* seq_out,
@@ -494,7 +527,7 @@ void api2_cfg_set_defaults(api2_cfg_t* cfg)
 
     memset(cfg, 0, sizeof(*cfg));
 
-    (void)snprintf(cfg->iface_ip, sizeof(cfg->iface_ip), "0.0.0.0");
+    (void)snprintf(cfg->iface_ip, sizeof(cfg->iface_ip), "169.254.214.172");
     cfg->ttl = 1u;
     cfg->loopback = 1u;
 
@@ -509,6 +542,10 @@ void api2_cfg_set_defaults(api2_cfg_t* cfg)
     cfg->button_led.enabled = 1u;
     (void)snprintf(cfg->button_led.group_ip, sizeof(cfg->button_led.group_ip), "239.255.2.3");
     cfg->button_led.port = 50100u;
+
+    cfg->tracker_telem.enabled = 1u;
+    (void)snprintf(cfg->tracker_telem.group_ip, sizeof(cfg->tracker_telem.group_ip), "239.255.2.4");
+    cfg->tracker_telem.port = 50100u;
 
     cfg->camera_id = 1u;
 }
@@ -676,6 +713,130 @@ int api2_send_cam1(
     return rc;
 }
 
+int api2_send_tlm1(
+        uint32_t seq,
+        uint8_t camera_id,
+        const char* topic,
+        const char* value)
+{
+    cJSON* root = NULL;
+    char* json = NULL;
+    int rc = -1;
+
+    if ((topic == NULL) || (value == NULL)) {
+        return -1;
+    }
+
+    root = cJSON_CreateObject();
+    if (root == NULL) {
+        return -1;
+    }
+
+    cJSON_AddStringToObject(root, "type", "telemetry_kv");
+    cJSON_AddStringToObject(root, "channel", api2_channel_name(API2_CH_CAMERA));
+    cJSON_AddNumberToObject(root, "seq", (double)seq);
+    cJSON_AddNumberToObject(root, "camera_id", (double)camera_id);
+    cJSON_AddStringToObject(root, "topic", topic);
+    cJSON_AddStringToObject(root, "value", value);
+
+    json = cJSON_PrintUnformatted(root);
+    if (json != NULL) {
+        rc = api2_send_json_string(API2_CH_CAMERA, json);
+        cJSON_free(json);
+    }
+
+    cJSON_Delete(root);
+    return rc;
+}
+
+int api2_send_tracker_telem(
+        uint32_t seq,
+        uint8_t camera_id,
+        const api2_tracker_telem_t* st)
+{
+    cJSON* root = NULL;
+    char* json = NULL;
+    int rc = -1;
+
+    if (st == NULL) {
+        return -1;
+    }
+
+    root = cJSON_CreateObject();
+    if (root == NULL) {
+        return -1;
+    }
+
+    cJSON_AddStringToObject(root, "type", "tracker_telemetry");
+    cJSON_AddStringToObject(root, "channel", api2_channel_name(API2_CH_TRACKER_TELEM));
+    cJSON_AddNumberToObject(root, "seq", (double)seq);
+    cJSON_AddNumberToObject(root, "camera_id", (double)camera_id);
+    cJSON_AddNumberToObject(root, "version", (double)st->version);
+    cJSON_AddItemToObject(root, "pt_reserved",
+                          api2_json_add_u8_array(st->pt_reserved, sizeof(st->pt_reserved)));
+    cJSON_AddNumberToObject(root, "lrf_range", (double)st->lrf_range);
+    cJSON_AddItemToObject(root, "lrf_reserved",
+                          api2_json_add_u8_array(st->lrf_reserved, sizeof(st->lrf_reserved)));
+    cJSON_AddNumberToObject(root, "thermal_ret_x", (double)st->thermal_ret_x);
+    cJSON_AddNumberToObject(root, "thermal_ret_y", (double)st->thermal_ret_y);
+    cJSON_AddNumberToObject(root, "thermal_fov_code", (double)st->thermal_fov_code);
+    cJSON_AddNumberToObject(root, "thermal_fov_deg", (double)st->thermal_fov_deg);
+    cJSON_AddNumberToObject(root, "thermal_nuc_status", (double)st->thermal_nuc_status);
+    cJSON_AddItemToObject(root, "thermal_reserved",
+                          api2_json_add_u8_array(st->thermal_reserved, sizeof(st->thermal_reserved)));
+    cJSON_AddNumberToObject(root, "day_ret_x", (double)st->day_ret_x);
+    cJSON_AddNumberToObject(root, "day_ret_y", (double)st->day_ret_y);
+    cJSON_AddNumberToObject(root, "day_fov_code", (double)st->day_fov_code);
+    cJSON_AddNumberToObject(root, "day_fov_deg", (double)st->day_fov_deg);
+    cJSON_AddItemToObject(root, "day_reserved",
+                          api2_json_add_u8_array(st->day_reserved, sizeof(st->day_reserved)));
+    cJSON_AddNumberToObject(root, "day2_ret_x", (double)st->day2_ret_x);
+    cJSON_AddNumberToObject(root, "day2_ret_y", (double)st->day2_ret_y);
+    cJSON_AddNumberToObject(root, "day2_fov_code", (double)st->day2_fov_code);
+    cJSON_AddNumberToObject(root, "day2_fov_deg", (double)st->day2_fov_deg);
+    cJSON_AddItemToObject(root, "day2_reserved",
+                          api2_json_add_u8_array(st->day2_reserved, sizeof(st->day2_reserved)));
+    cJSON_AddNumberToObject(root, "tracker_enable_mode", (double)st->tracker_enable_mode);
+    cJSON_AddNumberToObject(root, "tracker_ret_x", (double)st->tracker_ret_x);
+    cJSON_AddNumberToObject(root, "tracker_ret_y", (double)st->tracker_ret_y);
+    cJSON_AddNumberToObject(root, "tracker_bb_w", (double)st->tracker_bb_w);
+    cJSON_AddNumberToObject(root, "tracker_bb_h", (double)st->tracker_bb_h);
+    cJSON_AddNumberToObject(root, "tracker_pan_err", (double)st->tracker_pan_err);
+    cJSON_AddNumberToObject(root, "tracker_tilt_err", (double)st->tracker_tilt_err);
+    cJSON_AddNumberToObject(root, "track_cam_id", (double)st->track_cam_id);
+    cJSON_AddNumberToObject(root, "track_mode", (double)st->track_mode);
+    cJSON_AddNumberToObject(root, "track_type", (double)st->track_type);
+    cJSON_AddNumberToObject(root, "detection_mode", (double)st->detection_mode);
+    cJSON_AddItemToObject(root, "tracker_reserved",
+                          api2_json_add_u8_array(st->tracker_reserved, sizeof(st->tracker_reserved)));
+    cJSON_AddItemToObject(root, "factory_reserved",
+                          api2_json_add_u8_array(st->factory_reserved, sizeof(st->factory_reserved)));
+    cJSON_AddNumberToObject(root, "sys_temp", (double)st->sys_temp);
+    cJSON_AddNumberToObject(root, "lat", st->lat);
+    cJSON_AddNumberToObject(root, "ns_dir", (double)st->ns_dir);
+    cJSON_AddNumberToObject(root, "lon", st->lon);
+    cJSON_AddNumberToObject(root, "ew_dir", (double)st->ew_dir);
+    cJSON_AddNumberToObject(root, "alt_m", (double)st->alt_m);
+    cJSON_AddNumberToObject(root, "sat", (double)st->sat);
+    cJSON_AddNumberToObject(root, "gps_qos", (double)st->gps_qos);
+    cJSON_AddItemToObject(root, "gps_reserved",
+                          api2_json_add_u8_array(st->gps_reserved, sizeof(st->gps_reserved)));
+    cJSON_AddNumberToObject(root, "pwr_day_on", (double)st->pwr_day_on);
+    cJSON_AddNumberToObject(root, "pwr_thermal_on", (double)st->pwr_thermal_on);
+    cJSON_AddNumberToObject(root, "pwr_plcb_on", (double)st->pwr_plcb_on);
+    cJSON_AddNumberToObject(root, "pwr_lrf_on", (double)st->pwr_lrf_on);
+    cJSON_AddNumberToObject(root, "pwr_overall", (double)st->pwr_overall);
+
+    json = cJSON_PrintUnformatted(root);
+    if (json != NULL) {
+        rc = api2_send_json_string(API2_CH_TRACKER_TELEM, json);
+        cJSON_free(json);
+    }
+
+    cJSON_Delete(root);
+    return rc;
+}
+
 int api2_poll_cam1(
         uint32_t* seq_out,
         uint8_t* camera_id_out,
@@ -715,6 +876,17 @@ int api2_send_button_led_json(
         const char* direction,
         const char* source)
 {
+    return api2_send_button_led_state_json(seq, 0u, name, value, direction, source);
+}
+
+int api2_send_button_led_state_json(
+        uint32_t seq,
+        uint8_t id,
+        const char* name,
+        uint8_t value,
+        const char* direction,
+        const char* source)
+{
     cJSON* root = NULL;
     char* json = NULL;
     int rc = -1;
@@ -731,10 +903,82 @@ int api2_send_button_led_json(
     cJSON_AddStringToObject(root, "type", "button_led");
     cJSON_AddStringToObject(root, "channel", api2_channel_name(API2_CH_BUTTON_LED));
     cJSON_AddNumberToObject(root, "seq", (double)seq);
+    cJSON_AddNumberToObject(root, "id", (double)id);
     cJSON_AddStringToObject(root, "name", name);
     cJSON_AddNumberToObject(root, "value", (double)value);
     cJSON_AddStringToObject(root, "direction", (direction != NULL) ? direction : "tx");
     cJSON_AddStringToObject(root, "source", (source != NULL) ? source : "wcs");
+
+    json = cJSON_PrintUnformatted(root);
+    if (json != NULL) {
+        rc = api2_send_json_string(API2_CH_BUTTON_LED, json);
+        cJSON_free(json);
+    }
+
+    cJSON_Delete(root);
+    return rc;
+}
+
+int api2_send_button_led_snapshot_json(
+        uint32_t seq,
+        const void *states,
+        size_t state_count,
+        size_t state_stride,
+        size_t id_offset,
+        size_t name_offset,
+        size_t value_offset,
+        const char* direction,
+        const char* source)
+{
+    cJSON* root = NULL;
+    cJSON* buttons = NULL;
+    char* json = NULL;
+    int rc = -1;
+    size_t i;
+
+    if ((states == NULL) || (state_count == 0u) || (state_stride == 0u)) {
+        return -1;
+    }
+
+    root = cJSON_CreateObject();
+    if (root == NULL) {
+        return -1;
+    }
+
+    buttons = cJSON_CreateObject();
+    if (buttons == NULL) {
+        cJSON_Delete(root);
+        return -1;
+    }
+
+    cJSON_AddStringToObject(root, "type", "button_led_snapshot");
+    cJSON_AddStringToObject(root, "channel", api2_channel_name(API2_CH_BUTTON_LED));
+    cJSON_AddNumberToObject(root, "seq", (double)seq);
+    cJSON_AddStringToObject(root, "direction", (direction != NULL) ? direction : "tx");
+    cJSON_AddStringToObject(root, "source", (source != NULL) ? source : "wcs");
+    cJSON_AddItemToObject(root, "buttons", buttons);
+
+    for (i = 0u; i < state_count; ++i) {
+        const uint8_t *base = (const uint8_t *)states + (i * state_stride);
+        const uint8_t *id_ptr = base + id_offset;
+        const uint8_t *value_ptr = base + value_offset;
+        const char *name_ptr = (const char *)(base + name_offset);
+        cJSON *entry = NULL;
+
+        if ((name_ptr == NULL) || (name_ptr[0] == '\0')) {
+            continue;
+        }
+
+        entry = cJSON_CreateObject();
+        if (entry == NULL) {
+            cJSON_Delete(root);
+            return -1;
+        }
+
+        cJSON_AddNumberToObject(entry, "id", (double)(*id_ptr));
+        cJSON_AddNumberToObject(entry, "value", (double)(*value_ptr));
+        cJSON_AddItemToObject(buttons, name_ptr, entry);
+    }
 
     json = cJSON_PrintUnformatted(root);
     if (json != NULL) {

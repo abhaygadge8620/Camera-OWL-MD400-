@@ -59,7 +59,6 @@ static int owl_socket_wouldblock(void)
 #define MIN_RESP_LEN          (1u + 1u + 1u + 2u + 2u)
 #define OWL_LAST_FAIL_MAX     (512u)
 
-static owl_cam_t *g_tracker_cam = NULL;
 static int g_udp_mcast_enabled = 0;
 static uint8_t g_udp_camera_id = 1u;
 static uint32_t *g_udp_seq_counter = NULL;
@@ -73,10 +72,6 @@ static int g_last_fail_valid = 0;
 static int g_vlc_started = 0;
 static pid_t g_vlc_pid = -1;
 #define VLC_EXE_PATH "vlc"
-static void owl_kill_processes_by_name(const char *exe_name)
-{
-    (void)exe_name;
-}
 
 static int owl_resolve_vlc_path(const char *configured_path, char *resolved_path, size_t resolved_path_sz)
 {
@@ -205,122 +200,6 @@ static double rd_f64_le(const uint8_t *p)
     double d = 0.0;
     (void)memcpy(&d, &u, sizeof(d));
     return d;
-}
-
-static int tracker_cam_is_valid(uint8_t cam)
-{
-    return (cam == OWL_TRACK_CAM_THERMAL) ||
-           (cam == OWL_TRACK_CAM_DAY1) ||
-           (cam == OWL_TRACK_CAM_DAY2);
-}
-
-static int tracker_coord_mode_is_valid(uint8_t mode)
-{
-    return (mode == OWL_TRK_COORD_START) || (mode == OWL_TRK_COORD_STOP);
-}
-
-static int tracker_detect_mode_is_valid(uint8_t mode)
-{
-    return (mode >= OWL_TRK_DETECT_DRONE) && (mode <= OWL_TRK_DETECT_FIGHTERJET);
-}
-
-static int tracker_auto_mode_is_valid(uint8_t mode)
-{
-    return (mode == OWL_TRK_AUTO_NONE) ||
-           (mode == OWL_TRK_AUTO_DRONE) ||
-           (mode == OWL_TRK_AUTO_BIRD) ||
-           (mode == OWL_TRK_AUTO_FIGHTERJET) ||
-           (mode == OWL_TRK_AUTO_ALL);
-}
-
-static int tracker_disable_mask_is_valid(uint8_t disable_mask)
-{
-    const uint8_t valid_bits = (uint8_t)(OWL_TRK_DISABLE_THERMAL |
-                                         OWL_TRK_DISABLE_DAY1 |
-                                         OWL_TRK_DISABLE_DAY2);
-
-    return ((disable_mask & valid_bits) != 0u) &&
-           ((disable_mask & (uint8_t)(~valid_bits)) == 0u);
-}
-
-int camera_iface_read_tracker(tracker_state_t *out_state)
-{
-    int rc;
-
-    if ((out_state == NULL) || (g_tracker_cam == NULL)) {
-        return OWL_ERR_ARG;
-    }
-
-    /* Tracker register reads can transiently time out right after camera startup. */
-    rc = owl_tracker_read_all(out_state);
-    if (rc == OWL_OK) {
-        return OWL_OK;
-    }
-
-    if ((rc == OWL_ERR_IO) || (rc == OWL_ERR_PROTO)) {
-        rc = owl_tracker_read_all(out_state);
-        if (rc == OWL_OK) {
-            return OWL_OK;
-        }
-        if ((rc == OWL_ERR_IO) || (rc == OWL_ERR_PROTO)) {
-            rc = owl_tracker_read_all(out_state);
-        }
-    }
-
-    return rc;
-}
-
-int camera_iface_cmd_w6(uint8_t mode_value)
-{
-    tracker_state_t st;
-    const uint8_t new_mode = (mode_value != 0u) ? OWL_TRK_MODE_ON : OWL_TRK_MODE_OFF;
-    int rc;
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-
-    rc = owl_tracker_read_all(&st);
-    if (rc != OWL_OK) {
-        return rc;
-    }
-
-    return owl_tracker_set_coord(st.coord_cam_id, st.coord_x, st.coord_y, new_mode);
-}
-
-int camera_iface_cmd_w7(uint8_t disable_mask)
-{
-    tracker_state_t st;
-    uint8_t cam_bit = 0u;
-    int rc;
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if (tracker_disable_mask_is_valid(disable_mask) == 0) {
-        return OWL_ERR_ARG;
-    }
-
-    rc = owl_tracker_read_all(&st);
-    if (rc != OWL_OK) {
-        return rc;
-    }
-
-    if (st.coord_cam_id == OWL_TRACK_CAM_THERMAL) {
-        cam_bit = OWL_TRK_DISABLE_THERMAL;
-    } else if (st.coord_cam_id == OWL_TRACK_CAM_DAY1) {
-        cam_bit = OWL_TRK_DISABLE_DAY1;
-    } else if (st.coord_cam_id == OWL_TRACK_CAM_DAY2) {
-        cam_bit = OWL_TRK_DISABLE_DAY2;
-    } else {
-        return OWL_ERR_PROTO;
-    }
-
-    if ((disable_mask & cam_bit) == 0u) {
-        return OWL_OK;
-    }
-
-    return owl_tracker_set_coord(st.coord_cam_id, st.coord_x, st.coord_y, OWL_TRK_MODE_OFF);
 }
 
 /* ---- Helpers ---- */
@@ -668,7 +547,7 @@ static int owl_cam_lens_stop(owl_cam_t *cam, owl_iface_t iface, uint8_t stop_mod
 
 void camera_iface_bind_cam(owl_cam_t *cam)
 {
-    g_tracker_cam = cam;
+    tracker_bind_cam((void *)cam);
 }
 
 int owl_cam_open(owl_cam_t *cam, const char *ip4_str, uint16_t tcp_port)
@@ -833,6 +712,16 @@ int owl_cam_restart(owl_cam_t *cam, uint8_t mode)
     }
 
     return owl_write_u8(cam, OWL_IFACE_CONTROL, OWL_ADDR_GLOBAL_RESTART, mode);
+}
+
+int owl_cam_set_osd(owl_cam_t *cam, bool enable)
+{
+    if (cam == NULL) {
+        return OWL_ERR_ARG;
+    }
+
+    return owl_write_u8(cam, OWL_IFACE_CONTROL, OWL_ADDR_OSD,
+                        (enable != false) ? OWL_OSD_ON : OWL_OSD_OFF);
 }
 
 int owl_cam_set_pip(owl_cam_t *cam, bool enable)
@@ -1230,10 +1119,13 @@ static int parse_telem(const uint8_t *buf, size_t len, owl_telem_frame_t *out)
     out->version = p[o];
     o += 1U;
 
+    (void)memcpy(out->pt_reserved, &p[o], sizeof(out->pt_reserved));
     o += 10U;
 
     out->lrf_range = rd_u16_be(&p[o]);
-    o += 5U;
+    o += 2U;
+    (void)memcpy(out->lrf_reserved, &p[o], sizeof(out->lrf_reserved));
+    o += 3U;
 
     out->thermal_ret_x = rd_u16_be(&p[o]);
     o += 2U;
@@ -1245,6 +1137,7 @@ static int parse_telem(const uint8_t *buf, size_t len, owl_telem_frame_t *out)
     o += 4U;
     out->thermal_nuc_status = p[o];
     o += 1U;
+    (void)memcpy(out->thermal_reserved, &p[o], sizeof(out->thermal_reserved));
     o += 10U;
 
     out->day_ret_x = rd_u16_be(&p[o]);
@@ -1255,9 +1148,19 @@ static int parse_telem(const uint8_t *buf, size_t len, owl_telem_frame_t *out)
     o += 1U;
     out->day_fov_deg = rd_f32_le(&p[o]);
     o += 4U;
+    (void)memcpy(out->day_reserved, &p[o], sizeof(out->day_reserved));
     o += 11U;
 
-    o += 20U; /* Day2 block ignored in struct */
+    out->day2_ret_x = rd_u16_be(&p[o]);
+    o += 2U;
+    out->day2_ret_y = rd_u16_be(&p[o]);
+    o += 2U;
+    out->day2_fov_code = p[o];
+    o += 1U;
+    out->day2_fov_deg = rd_f32_le(&p[o]);
+    o += 4U;
+    (void)memcpy(out->day2_reserved, &p[o], sizeof(out->day2_reserved));
+    o += 11U;
 
     out->tracker_mode = p[o];
     o += 1U;
@@ -1273,8 +1176,18 @@ static int parse_telem(const uint8_t *buf, size_t len, owl_telem_frame_t *out)
     o += 2U;
     out->tracker_tilt_err = rd_u16_be(&p[o]);
     o += 2U;
-    o += 7U;
+    out->tracker_cam_id = p[o];
+    o += 1U;
+    out->tracker_track_mode = p[o];
+    o += 1U;
+    out->tracker_track_type = p[o];
+    o += 1U;
+    out->tracker_detection_mode = p[o];
+    o += 1U;
+    (void)memcpy(out->tracker_reserved, &p[o], sizeof(out->tracker_reserved));
+    o += 3U;
 
+    (void)memcpy(out->factory_reserved, &p[o], sizeof(out->factory_reserved));
     o += 20U;
 
     out->sys_temp = rd_u16_be(&p[o]);
@@ -1294,6 +1207,7 @@ static int parse_telem(const uint8_t *buf, size_t len, owl_telem_frame_t *out)
     o += 1U;
     out->gpsQOS = p[o];
     o += 1U;
+    (void)memcpy(out->gps_reserved, &p[o], sizeof(out->gps_reserved));
     o += 21U;
 
     out->pwr_day_on     = (p[o + 0U] == 0x01u) ? 1U : 0U;
@@ -1320,7 +1234,7 @@ int camera_telem_recv(owl_telem_t *ctx, owl_telem_frame_t *out, int timeout_ms)
         FD_SET(OWL_SOCK(ctx->udp_fd), &rfds);
 
         struct timeval tv;
-        const struct timeval *ptv = NULL;
+        struct timeval *ptv = NULL;
 
         if (timeout_ms > 0) {
             tv.tv_sec = (timeout_ms / 1000);
@@ -1495,349 +1409,6 @@ int camera_iface_get_last_failed_frame(uint8_t *out_frame, size_t *inout_len,
 
     return 1;
 }
-
-/* ---- Tracker writers/readers ---- */
-
-int owl_tracker_mode_on(uint8_t cam, uint16_t x, uint16_t y)
-{
-    return owl_tracker_set_coord(cam, x, y, OWL_TRK_MODE_ON);
-}
-
-int owl_tracker_mode_off(uint8_t cam, uint16_t x, uint16_t y)
-{
-    return owl_tracker_set_coord(cam, x, y, OWL_TRK_MODE_OFF);
-}
-
-int owl_tracker_set_coord(uint8_t cam, uint16_t x, uint16_t y, uint8_t mode)
-{
-    uint8_t b[6];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if ((tracker_cam_is_valid(cam) == 0) || (tracker_coord_mode_is_valid(mode) == 0)) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = (uint8_t)(x >> 8);
-    b[2] = (uint8_t)(x & 0xFFu);
-    b[3] = (uint8_t)(y >> 8);
-    b[4] = (uint8_t)(y & 0xFFu);
-    b[5] = mode;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_COORD, b, 6u);
-}
-
-int owl_tracker_set_box(uint8_t cam, uint8_t w, uint8_t h)
-{
-    uint8_t b[3];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if ((tracker_cam_is_valid(cam) == 0) || (w == 0u) || (h == 0u)) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = w;
-    b[2] = h;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_BOX, b, 3u);
-}
-
-int owl_tracker_set_mode(uint8_t cam, uint8_t mode)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if ((tracker_cam_is_valid(cam) == 0) || (tracker_detect_mode_is_valid(mode) == 0)) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = mode;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_MODE, b, 2u);
-}
-
-int owl_tracker_set_lock(uint8_t cam, uint8_t mode)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if (tracker_cam_is_valid(cam) == 0) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = mode;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_LOCK, b, 2u);
-}
-
-int owl_tracker_set_stab(uint8_t cam, uint8_t mode)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if (tracker_cam_is_valid(cam) == 0) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = mode;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_STAB, b, 2u);
-}
-
-int owl_tracker_set_szone(uint8_t cam, uint8_t zone)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if (tracker_cam_is_valid(cam) == 0) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = zone;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_SZONE, b, 2u);
-}
-
-int owl_tracker_set_auto(uint8_t cam, uint8_t mode, uint8_t sens)
-{
-    uint8_t b[3];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if ((tracker_cam_is_valid(cam) == 0) || (tracker_auto_mode_is_valid(mode) == 0)) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = mode;
-    b[2] = sens;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_AUTO, b, 3u);
-}
-
-int owl_tracker_set_roi(uint8_t cam, uint8_t mode)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if (tracker_cam_is_valid(cam) == 0) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = mode;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_ROI, b, 2u);
-}
-
-int owl_tracker_set_bitrate_centi(uint16_t centi_mbps)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = (uint8_t)(centi_mbps >> 8);
-    b[1] = (uint8_t)(centi_mbps & 0xFFu);
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_BITRATE, b, 2u);
-}
-
-int owl_tracker_set_maxfail(uint8_t cam, uint8_t code)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if (tracker_cam_is_valid(cam) == 0) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = code;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_MAXFAIL, b, 2u);
-}
-
-int owl_tracker_set_type(uint8_t cam, uint8_t type_code)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if (tracker_cam_is_valid(cam) == 0) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = type_code;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_TYPE, b, 2u);
-}
-
-int owl_tracker_set_search_area(uint8_t cam, uint8_t percent)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if ((tracker_cam_is_valid(cam) == 0) || (percent > 100u)) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = percent;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_SEARCH_AREA, b, 2u);
-}
-
-int owl_tracker_set_confidence(uint8_t cam, uint8_t tenths)
-{
-    uint8_t b[2];
-
-    if (g_tracker_cam == NULL) {
-        return OWL_ERR_ARG;
-    }
-    if ((tracker_cam_is_valid(cam) == 0) || (tenths > 10u)) {
-        return OWL_ERR_ARG;
-    }
-
-    b[0] = cam;
-    b[1] = tenths;
-    return owl_cam_write(g_tracker_cam, OWL_IFACE_TRACKER, OWL_ADDR_TRK_SET_CONFIDENCE, b, 2u);
-}
-
-int owl_tracker_read_all(tracker_state_t *st)
-{
-    if ((st == NULL) || (g_tracker_cam == NULL)) {
-        return OWL_ERR_ARG;
-    }
-
-#define RD(_addr, _buf, _len) \
-    do { \
-        size_t _io = (size_t)(_len); \
-        int _rc = owl_cam_read(g_tracker_cam, OWL_IFACE_TRACKER, (_addr), (_buf), &_io); \
-        if ((_rc != OWL_OK) || (_io != (size_t)(_len))) { \
-            return (_rc != OWL_OK) ? _rc : OWL_ERR_IO; \
-        } \
-    } while (0)
-
-    {
-        uint8_t b[6];
-        RD(OWL_ADDR_TRK_SET_COORD, b, 6);
-        st->coord_cam_id = b[0];
-        st->coord_x = ((uint16_t)b[1] << 8) | b[2];
-        st->coord_y = ((uint16_t)b[3] << 8) | b[4];
-        st->coord_mode = b[5];
-    }
-
-    {
-        uint8_t b[3];
-        RD(OWL_ADDR_TRK_SET_BOX, b, 3);
-        st->box_cam_id = b[0];
-        st->box_w = b[1];
-        st->box_h = b[2];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_MODE, b, 2);
-        st->tmode_cam_id = b[0];
-        st->tmode = b[1];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_LOCK, b, 2);
-        st->lock_cam_id = b[0];
-        st->lock_mode = b[1];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_STAB, b, 2);
-        st->stab_cam_id = b[0];
-        st->stab_mode = b[1];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_SZONE, b, 2);
-        st->szone_cam_id = b[0];
-        st->szone_zone = b[1];
-    }
-
-    {
-        uint8_t b[3];
-        RD(OWL_ADDR_TRK_SET_AUTO, b, 3);
-        st->ad_cam_id = b[0];
-        st->ad_mode = b[1];
-        st->ad_sens = b[2];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_ROI, b, 2);
-        st->roi_cam_id = b[0];
-        st->roi_mode = b[1];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_BITRATE, b, 2);
-        st->enc_br_centi = ((uint16_t)b[0] << 8) | b[1];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_MAXFAIL, b, 2);
-        st->mfail_cam_id = b[0];
-        st->mfail_code = b[1];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_TYPE, b, 2);
-        st->type_cam_id = b[0];
-        st->type_code = b[1];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_SEARCH_AREA, b, 2);
-        st->sarea_cam_id = b[0];
-        st->sarea_percent = b[1];
-    }
-
-    {
-        uint8_t b[2];
-        RD(OWL_ADDR_TRK_SET_CONFIDENCE, b, 2);
-        st->conf_cam_id = b[0];
-        st->conf_tenths = b[1];
-    }
-
-#undef RD
-    return OWL_OK;
-}
-
-
-
-
-
-
-
 
 // /*
 //  * @file camera_iface.c
